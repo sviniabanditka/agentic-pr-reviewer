@@ -1,0 +1,95 @@
+# Secret pr-reviewer-secrets is not in the repo: scripts/set-secret.sh fills it.
+# ConfigMap pr-reviewer-config is generated from config.json by scripts/deploy.sh.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pr-reviewer-data
+  namespace: pr-reviewer
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pr-reviewer
+  namespace: pr-reviewer
+  labels:
+    app: pr-reviewer
+spec:
+  replicas: 1
+  revisionHistoryLimit: 2
+  # One SQLite writer and an RWO volume: the old pod must stop before the new one starts.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: pr-reviewer
+  template:
+    metadata:
+      labels:
+        app: pr-reviewer
+      annotations:
+        # Changes with config.json, so a config edit rolls the pod.
+        pr-reviewer/config-sha: CONFIG_SHA
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: pr-reviewer
+          image: IMAGE
+          # Tags are unique per deploy: a cached image is the image.
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - secretRef:
+                name: pr-reviewer-secrets
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: config
+              mountPath: /config
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 50m
+            limits:
+              memory: 1Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: pr-reviewer-data
+        - name: config
+          configMap:
+            name: pr-reviewer-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pr-reviewer
+  namespace: pr-reviewer
+spec:
+  selector:
+    app: pr-reviewer
+  ports:
+    - port: 80
+      targetPort: 8080
