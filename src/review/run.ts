@@ -1,9 +1,11 @@
 import { buildUserMessage } from "./prompt.js";
-import { renderDiffForPrompt, type PreparedDiff } from "./diff.js";
+import { renderChunk, type ChunkedDiff } from "./chunk.js";
 import { verifyFindings, type VerifiedFinding } from "./verify.js";
+import { outputSchema, systemPrompt, type ResolvedProfile } from "./modes.js";
 import { checkVerdict, findingMarker, isBlockingCandidate, type CheckVerdict } from "../verdict/verdict.js";
+import type { ClaudeRequest, ReviewOutcome, RunResult } from "./claude.js";
 import type { PrContext } from "./context.js";
-import type { ReviewOutcome, RunResult } from "./claude.js";
+import type { PrSummary } from "./finding.js";
 
 export interface ReviewResult {
   outcome: ReviewOutcome;
@@ -14,16 +16,28 @@ export interface ReviewResult {
   skippedFiles: { path: string; reason: string }[];
   usage: { runs: number; tokensIn: number; tokensOut: number; costUsd: number; latencyModelMs: number };
   errorMessage?: string;
+  /** Since v2.1: what produced the result. Older stored results lack these. */
+  mode?: string;
+  blocking?: string[];
+  chunks?: number;
+  summary?: PrSummary;
 }
 
 export interface ReviewInput {
-  diff: PreparedDiff;
+  diff: ChunkedDiff;
   context: PrContext;
   intent?: string;
+  profile: ResolvedProfile;
+}
+
+export interface RunMeta {
+  purpose: "review" | "confirm";
+  chunk: number;
+  chunks: number;
 }
 
 export interface ReviewDeps {
-  call: (userMessage: string) => Promise<RunResult>;
+  call: (req: ClaudeRequest, meta: RunMeta) => Promise<RunResult>;
   log: (msg: string) => void;
   /** Tells the panel which run is going on. */
   stage?: (stage: "review" | "confirm") => void;
@@ -38,58 +52,104 @@ export function isInconclusive(outcome: ReviewOutcome): boolean {
   return INCONCLUSIVE[outcome] === true;
 }
 
+/**
+ * Runs a profile over a chunked diff: one model run per chunk, evidence checked against
+ * the whole diff, findings merged by marker. When the profile asks for confirmation, the
+ * chunks that produced blocking candidates run again and only reproduced markers count.
+ */
 export async function review(input: ReviewInput, deps: ReviewDeps): Promise<ReviewResult> {
-  const message = buildUserMessage(input.context, renderDiffForPrompt(input.diff), input.intent);
+  const { diff, profile } = input;
   const delays = deps.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
+  const system = systemPrompt(profile);
+  const schema = outputSchema(profile);
+  const intent = profile.intent === "pr-body" ? input.intent : undefined;
   const runs: RunResult[] = [];
+  const n = diff.chunks.length;
+  const base = { skippedFiles: diff.skippedFiles, mode: profile.mode.id, blocking: profile.blocking, chunks: n };
 
-  const runWithRetries = async (name: string): Promise<RunResult> => {
+  const runChunk = async (purpose: RunMeta["purpose"], chunk: number): Promise<RunResult> => {
+    const req = { system, user: buildUserMessage(input.context, renderChunk(diff, diff.chunks[chunk]!), intent), schema };
+    const label = n > 1 ? `${purpose} ${chunk + 1}/${n}` : purpose;
     for (let attempt = 0; ; attempt++) {
-      deps.log(`${name}: model run ${attempt + 1}`);
-      const result = await deps.call(message);
+      deps.log(`${label}: model run ${attempt + 1}`);
+      const result = await deps.call(req, { purpose, chunk, chunks: n });
       runs.push(result);
       if (!isInconclusive(result.outcome) || attempt >= delays.length) return result;
-      deps.log(`${name}: ${result.outcome} (${result.errorMessage ?? "-"}), retry in ${delays[attempt]! / 1000}s`);
+      deps.log(`${label}: ${result.outcome} (${result.errorMessage ?? "-"}), retry in ${delays[attempt]! / 1000}s`);
       await Bun.sleep(delays[attempt]!);
     }
   };
 
-  const base = { skippedFiles: input.diff.skippedFiles };
-  deps.stage?.("review");
-  const first = await runWithRetries("review");
-  const findings = verifyFindings(first.findings, input.diff);
-  const candidates = findings.filter(isBlockingCandidate);
-
-  if (isInconclusive(first.outcome) || candidates.length === 0) {
-    return {
-      ...base,
-      outcome: first.outcome,
-      verdict: checkVerdict(first.outcome, undefined, 0),
-      findings,
-      confirmedMarkers: [],
-      usage: sumUsage(runs),
-      ...(first.errorMessage !== undefined ? { errorMessage: first.errorMessage } : {}),
-    };
+  if (profile.mode.needsIntent && !intent?.trim()) {
+    return { ...base, outcome: "no_findings", verdict: { conclusion: "success", title: "no description to check against" }, findings: [], confirmedMarkers: [], usage: sumUsage(runs) };
   }
 
-  // A blocking finding holds a merge, so one run is not trusted: a second,
-  // independent run must reproduce the same marker.
+  deps.stage?.("review");
+  const first: RunResult[] = [];
+  for (let i = 0; i < n; i++) {
+    const result = await runChunk("review", i);
+    first.push(result);
+    if (isInconclusive(result.outcome)) {
+      return { ...base, outcome: result.outcome, verdict: checkVerdict(result.outcome, undefined, 0), findings: [], confirmedMarkers: [], usage: sumUsage(runs), ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}) };
+    }
+  }
+
+  if (profile.mode.output === "summary") {
+    return { ...base, outcome: "no_findings", verdict: { conclusion: "success", title: "summary ready" }, findings: [], confirmedMarkers: [], usage: sumUsage(runs), summary: mergeSummaries(first.map((r) => r.output as PrSummary)) };
+  }
+
+  const findings = dedupe(first.flatMap((r) => verifyFindings(r.findings, diff.full)));
+  const candidates = findings.filter((f) => isBlockingCandidate(f, profile.blocking));
+  const outcome: ReviewOutcome = findings.length > 0 ? "findings" : "no_findings";
+
+  if (candidates.length === 0 || profile.confirmation === "never") {
+    const confirmed = profile.confirmation === "never" ? candidates.map(findingMarker) : [];
+    return { ...base, outcome, verdict: checkVerdict(outcome, undefined, confirmed.length), findings, confirmedMarkers: confirmed, usage: sumUsage(runs) };
+  }
+
+  // A blocking finding holds a merge, so one run is not trusted: a second, independent
+  // run of the chunks that raised it must reproduce the same marker.
   deps.log(`${candidates.length} blocking candidate(s), confirmation run`);
   deps.stage?.("confirm");
-  const confirmation = await runWithRetries("confirm");
-  const confirmedMarkers = new Set(
-    verifyFindings(confirmation.findings, input.diff).filter(isBlockingCandidate).map(findingMarker),
-  );
-  const confirmed = candidates.filter((f) => confirmedMarkers.has(findingMarker(f)));
+  const chunksToConfirm = diff.chunks.filter((c) => candidates.some((f) => c.paths.includes(f.file))).map((c) => c.index);
+  const reproduced = new Set<string>();
+  let confirmationOutcome: ReviewOutcome = "no_findings";
+  for (const i of chunksToConfirm.length ? chunksToConfirm : [0]) {
+    const result = await runChunk("confirm", i);
+    if (isInconclusive(result.outcome)) {
+      confirmationOutcome = result.outcome;
+      break;
+    }
+    if (result.outcome === "findings") confirmationOutcome = "findings";
+    verifyFindings(result.findings, diff.full).filter((f) => isBlockingCandidate(f, profile.blocking)).forEach((f) => reproduced.add(findingMarker(f)));
+  }
+  const confirmed = candidates.filter((f) => reproduced.has(findingMarker(f)));
 
   return {
     ...base,
-    outcome: first.outcome,
-    confirmationOutcome: confirmation.outcome,
-    verdict: checkVerdict(first.outcome, confirmation.outcome, confirmed.length),
+    outcome,
+    confirmationOutcome,
+    verdict: checkVerdict(outcome, confirmationOutcome, confirmed.length),
     findings,
     confirmedMarkers: confirmed.map(findingMarker),
     usage: sumUsage(runs),
+  };
+}
+
+function dedupe(findings: VerifiedFinding[]): VerifiedFinding[] {
+  const seen = new Map<string, VerifiedFinding>();
+  for (const f of findings) if (!seen.has(findingMarker(f))) seen.set(findingMarker(f), f);
+  return [...seen.values()];
+}
+
+function mergeSummaries(parts: PrSummary[]): PrSummary {
+  if (parts.length === 1) return parts[0]!;
+  return {
+    title: parts[0]!.title,
+    summary: parts.map((p) => p.summary).join(" "),
+    changes: parts.flatMap((p) => p.changes),
+    risks: parts.flatMap((p) => p.risks),
+    testing: parts.flatMap((p) => p.testing),
   };
 }
 

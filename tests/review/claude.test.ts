@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { parseClaudeStream } from "../../src/review/claude.js";
+import { checkOutput, parseClaudeStream } from "../../src/review/claude.js";
+import { SubmitFindingsSchema } from "../../src/review/finding.js";
+
+const parsed = (out: string) => checkOutput({ ...parseClaudeStream(out), latencyMs: 0 }, SubmitFindingsSchema);
 
 const finding = {
   category: "SEC-AUTHZ",
@@ -33,7 +36,7 @@ function stream(result: Record<string, unknown>, extra: string[] = []): string {
 
 describe("parseClaudeStream", () => {
   it("reads findings from the result event and sums input tokens with cache reads", () => {
-    const r = parseClaudeStream(stream({ structured_output: { findings: [finding] } }));
+    const r = parsed(stream({ structured_output: { findings: [finding] } }));
     expect(r.outcome).toBe("findings");
     expect(r.findings).toHaveLength(1);
     expect(r.usage).toEqual({ input: 100, output: 5 });
@@ -48,11 +51,11 @@ describe("parseClaudeStream", () => {
   });
 
   it("an empty findings array is no_findings", () => {
-    expect(parseClaudeStream(stream({ structured_output: { findings: [] } })).outcome).toBe("no_findings");
+    expect(parsed(stream({ structured_output: { findings: [] } })).outcome).toBe("no_findings");
   });
 
   it("output that fails the schema is didnt_look, not an empty review", () => {
-    const r = parseClaudeStream(stream({ structured_output: { findings: [{ ...finding, category: "STYLE" }] } }));
+    const r = parsed(stream({ structured_output: { findings: [{ ...finding, category: "STYLE" }] } }));
     expect(r.outcome).toBe("didnt_look");
   });
 

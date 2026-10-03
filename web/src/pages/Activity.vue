@@ -4,6 +4,9 @@ import { store } from "../store";
 import { openReview } from "../router";
 import { clock } from "../format";
 import TPrompt from "../components/TPrompt.vue";
+import Insights from "../components/Insights.vue";
+
+const tab = ref<"log" | "insights">("log");
 
 const level = ref<"info" | "warn" | "error">("info");
 const q = ref("");
@@ -26,8 +29,10 @@ function onScroll() {
   <div class="grid gap-4">
     <div class="flex flex-wrap items-center gap-3">
       <TPrompt :level="1">activity</TPrompt>
-      <span class="text-tertiary">// tail -f of everything the reviewer does for you</span>
-      <div class="ml-auto flex flex-wrap items-center gap-2">
+      <div class="flex rounded-md border border-subtle bg-elevated p-0.5" role="tablist">
+        <button v-for="t in (['log', 'insights'] as const)" :key="t" role="tab" class="rounded-sm px-2 py-0.5" :class="tab === t ? 'bg-active text-bright' : 'text-tertiary'" :aria-selected="tab === t" @click="tab = t">{{ t }}</button>
+      </div>
+      <div v-if="tab === 'log'" class="ml-auto flex flex-wrap items-center gap-2">
         <input v-model="q" class="field w-56 py-1" placeholder="grep…" aria-label="filter log">
         <div class="flex rounded-md border border-subtle bg-elevated p-0.5" role="group" aria-label="level">
           <button v-for="l in (['info', 'warn', 'error'] as const)" :key="l" class="rounded-sm px-2 py-0.5" :class="level === l ? 'bg-active text-bright' : 'text-tertiary'" :aria-pressed="level === l" @click="level = l">{{ l === "info" ? "all" : l + "+" }}</button>
@@ -35,7 +40,8 @@ function onScroll() {
         <button class="rounded-sm px-1 hover:bg-hover" :class="follow ? 'text-ok' : 'text-tertiary'" @click="follow = !follow"><span class="text-tertiary">[</span> {{ follow ? "following" : "paused" }} <span class="text-tertiary">]</span></button>
       </div>
     </div>
-    <div ref="pane" class="h-[70vh] overflow-y-auto rounded-lg border border-subtle bg-surface py-2 text-[13px]" @scroll="onScroll">
+    <Insights v-if="tab === 'insights'" />
+    <div v-else ref="pane" class="h-[70vh] overflow-y-auto rounded-lg border border-subtle bg-surface py-2 text-[13px]" @scroll="onScroll">
       <div v-for="e in lines" :key="e.id" class="grid grid-cols-[72px_auto_1fr] items-baseline gap-3 px-4 py-px hover:bg-hover">
         <span class="text-faint">{{ clock(e.ts) }}</span>
         <span class="flex gap-2"><span v-if="e.account" class="text-accent">{{ e.account }}</span>

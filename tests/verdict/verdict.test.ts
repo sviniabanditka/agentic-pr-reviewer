@@ -74,7 +74,7 @@ describe("findingMarker", () => {
   it("has the documented shape with a 12-hex-char hash", () => {
     const f = finding({ file: "src/a.ts", category: "OTHER", line_start: 3, line_end: 5, claim: "x" });
 
-    expect(findingMarker(f)).toMatch(/^<!-- triage:v2:OTHER:src\/a\.ts:[0-9a-f]{12} -->$/);
+    expect(findingMarker(f)).toMatch(/^<!-- triage:v3:OTHER:src\/a\.ts:[0-9a-f]{12} -->$/);
   });
 });
 

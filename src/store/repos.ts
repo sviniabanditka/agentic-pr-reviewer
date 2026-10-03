@@ -29,6 +29,7 @@ export interface AccountRow {
   scopes: string | null;
   credential_id: string | null;
   model: string | null;
+  profile_id: string | null;
   status: string;
   status_detail: string | null;
   checked_at: number | null;
@@ -73,6 +74,7 @@ export interface TargetRow {
   filters_json: string;
   automation: Automation;
   model: string | null;
+  profile_id: string | null;
   poll_sec: number;
   enabled: number;
   last_polled_at: number | null;
@@ -268,4 +270,48 @@ export function setSetting(db: Database, userId: string, key: string, value: unk
     `INSERT INTO settings (user_id, key, value_json, updated_at) VALUES (?, ?, ?, ?)
      ON CONFLICT (user_id, key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`,
   ).run(userId, key, JSON.stringify(value), Date.now());
+}
+
+// ── profiles ──────────────────────────────────────────────────────
+export interface ProfileRow {
+  id: string;
+  user_id: string;
+  name: string;
+  mode: string;
+  options_json: string;
+  version: number;
+  is_default: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export function listProfiles(db: Database, userId: string): ProfileRow[] {
+  return db.query("SELECT * FROM profiles WHERE user_id = ? ORDER BY is_default DESC, created_at").all(userId) as ProfileRow[];
+}
+export function getProfile(db: Database, userId: string, id: string): ProfileRow | null {
+  return db.query("SELECT * FROM profiles WHERE id = ? AND user_id = ?").get(id, userId) as ProfileRow | null;
+}
+export function insertProfile(db: Database, row: { user_id: string; name: string; mode: string; options: unknown; is_default?: boolean }): ProfileRow {
+  const id = newId();
+  const now = Date.now();
+  db.query("INSERT INTO profiles (id, user_id, name, mode, options_json, is_default, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
+    id, row.user_id, row.name, row.mode, JSON.stringify(row.options ?? {}), row.is_default ? 1 : 0, now, now,
+  );
+  return getProfile(db, row.user_id, id)!;
+}
+export function updateProfile(db: Database, userId: string, id: string, fields: { name?: string; mode?: string; options?: unknown }): void {
+  const cur = getProfile(db, userId, id);
+  if (cur === null) return;
+  db.query("UPDATE profiles SET name = ?, mode = ?, options_json = ?, version = version + 1, updated_at = ? WHERE id = ? AND user_id = ?").run(
+    fields.name ?? cur.name, fields.mode ?? cur.mode, fields.options !== undefined ? JSON.stringify(fields.options) : cur.options_json, Date.now(), id, userId,
+  );
+}
+export function setDefaultProfile(db: Database, userId: string, id: string): void {
+  db.transaction(() => {
+    db.query("UPDATE profiles SET is_default = 0 WHERE user_id = ?").run(userId);
+    db.query("UPDATE profiles SET is_default = 1 WHERE id = ? AND user_id = ?").run(id, userId);
+  })();
+}
+export function deleteProfile(db: Database, userId: string, id: string): ProfileRow | null {
+  return db.query("DELETE FROM profiles WHERE id = ? AND user_id = ? RETURNING *").get(id, userId) as ProfileRow | null;
 }

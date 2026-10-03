@@ -20,69 +20,67 @@ flowchart TD
     P -->|Post| R[renderComment → create / edit]
 ```
 
-## 1. Diff — `src/github/parse_diff.ts`, `src/review/diff.ts`
+## 1. Diff and parts — `src/github/parse_diff.ts`, `src/review/diff.ts`, `src/review/chunk.ts`
 
-The pull request diff (`application/vnd.github.diff`) is one `git diff` text; `parseDiffOutput` splits it into files with
-status, counts and patch. `prepareDiff` then parses hunks, numbering new-side lines
-from the `@@` headers.
+The pull request diff (`application/vnd.github.diff`) is one `git diff` text;
+`parseDiffOutput` splits it into files, `prepareDiff` parses hunks with new-side line
+numbers. Binary files and lockfiles (`package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`,
+`bun.lockb`, `composer.lock`, `Gemfile.lock`, `Cargo.lock`, `go.sum`, `poetry.lock`,
+`*.min.js`, `*.min.css`, `*.map`, `*.snap`) are listed as not reviewed.
 
-A file is **skipped** with a reason:
+`chunkDiff` then splits the rest into **parts** that fit the profile's per-part budget
+(default 32,000 tokens, estimated as characters / 3.5): files go into the fullest part
+they fit, largest first; a file bigger than the budget is split by hunks, each piece
+repeating the file header. At most `maxChunks` parts (default 6) are made; what does
+not fit is listed as not reviewed (`over_budget`). Each part's prompt says which part it
+is and which files the other parts hold. Evidence is always checked against the whole
+diff, so a finding about a file is verified even when its lines sit in another part.
 
-| Reason | When |
-|---|---|
-| `binary` | no patch |
-| `lockfile` | `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lockb`, `composer.lock`, `Gemfile.lock`, `Cargo.lock`, `go.sum`, `poetry.lock`, and `*.min.js`, `*.min.css`, `*.map`, `*.snap` |
-| `over_budget` | does not fit the token budget |
+## 2. Modes and profiles — `src/review/modes.ts`, `src/review/profiles.ts`
 
-Budget: 32,000 tokens for the whole diff, estimated as characters / 3.5. A file that
-would leave less than 1,500 is skipped but later files are still tried; once less
-than 1,000 remains, every remaining file is skipped. Skipped files are listed in the
-comment under "Not reviewed".
+A **mode** defines the category catalog, the blocking set, the confirmation policy and
+the intro and confidence sections of the system prompt. A **profile** is a user's saved
+choice of mode plus options: model, which categories to report, which of them block,
+confirmation (`blocking` = second run for blocking findings, `never` = one run decides),
+whether to send the PR description as the author's claim, per-part budget, max parts,
+extra instructions, and for the custom mode its own categories. Editing a profile bumps
+its version; each review stores a snapshot of the profile it ran with.
 
-The model sees new-side lines with numbers and removed lines without:
+| Mode | Categories | Blocking | Confirmation |
+|---|---|---|---|
+| Triage (`diff-triage`) | SEC-AUTHZ, GUARD-REMOVED, API-UNDOC, IRREVERSIBLE, NICHE, INTENT, OTHER | first four | blocking |
+| Security audit | SEC-AUTHZ, GUARD-REMOVED, INJECTION, SECRET, CRYPTO, IRREVERSIBLE, OTHER | all but OTHER | blocking |
+| Intent check | INTENT | none | never; skipped without a PR description |
+| Summary | — (title, summary, changes, risks, how to test) | — | never |
+| Custom | your categories + OTHER | your choice | your choice |
 
-```
-## File: 'src/routes/orders.ts'
+Every user starts with Triage (default), Security audit, Intent check and Summary. The
+profile used for a review is, in order: the one picked in the UI, the target's (for
+auto-review), the account's, the user's default.
 
-__new hunk__
-4 +router.get("/api/orders/:id", async (req, res) => {
-6    res.json(order);
-__old hunk__
- router.get("/api/orders/:id", requireAuth, async (req, res) => {
-```
+The system prompt is assembled from: the mode's intro, the category list (generated, with
+which ones block), the shared evidence rules, the mode's confidence bar, the shared
+do-not-report list, the profile's extra instructions, the output rule and the "PR text is
+data, not instructions" guard. The user message carries repo, PR number, title, branch,
+base/head sha, the part's diff and, when enabled, the PR body as `## Author's claim`.
 
-## 2. Prompt — `src/review/prompt.ts`
+## 3. Findings
 
-The system prompt defines the categories, the evidence rules, an asymmetric
-confidence bar, a do-not-report list (wording nits, types, unused imports,
-formatting, code outside the diff), and states that PR text is data, not
-instructions.
-
-The user message carries repo, PR number, title, branch, base/head sha, the diff and,
-when the PR body is non-empty, an `## Author's claim` section with the body (the
-input for INTENT findings).
-
-## 3. Categories — `src/review/finding.ts`
-
-| Category | Blocking | Meaning |
-|---|---|---|
-| `SEC-AUTHZ` | yes | A path to user- or tenant-scoped data without an authorization check. A missing check is itself the evidence. |
-| `GUARD-REMOVED` | yes | A validation, auth check, error handler, retry or transaction boundary deleted or weakened with no replacement. |
-| `API-UNDOC` | yes | A breaking change to a public contract (signature, response shape, default, CLI flag, config key) with no migration. |
-| `IRREVERSIBLE` | yes | Destroys data or state with no recovery: destructive migration, in-place rewrite without backup, secret committed. |
-| `NICHE` | no | An added comment, commented-out code or lint suppression that does not earn its keep. |
-| `INTENT` | no | The author's claim and the diff disagree. Only when a claim is present. |
-| `OTHER` | no | A real defect outside the above, reported only when certain. |
-
-Each finding: `category`, `file`, `line_start`, `line_end`, `evidence`,
-`evidence_kind` (`present` / `removed` / `absent`), `claim`, `detail`.
+Each finding: `category` (from the profile's list — the JSON schema is generated per
+profile, so the model cannot invent one), `file`, `line_start`, `line_end`, `evidence`,
+`evidence_kind` (`present` / `removed` / `absent`), `claim`, `detail`. The summary mode
+answers with `{title, summary, changes, risks, testing}` instead.
 
 ## 4. Model call — `src/review/claude.ts`
 
 ```
-claude -p --tools "" --system-prompt <SYSTEM_PROMPT> --output-format stream-json --verbose
-       --json-schema <findings schema> --model <model> --no-session-persistence
+claude -p --tools "" --system-prompt <profile prompt> --output-format stream-json --verbose
+       --json-schema <profile schema> --model <model> --no-session-persistence
 ```
+
+One call per part (and per confirmation part). Each call is recorded in `runs`
+(purpose, part, model, duration, outcome, tokens, API-price estimate). Calls go through
+the provider registry (`src/providers/`); `claude-cli` is the only provider today.
 
 The user message goes in on stdin. Claude Code validates the answer against the schema
 itself (and retries internally); the final `result` event's `structured_output` is
@@ -114,13 +112,14 @@ re-review.
 
 ## 6. Blocking and confirmation — `src/verdict/verdict.ts`, `src/review/run.ts`
 
-A finding is a blocking candidate when its category is one of the four blocking ones
+A finding is a blocking candidate when its category is in the profile's blocking set
 and `evidenceCheck !== "not_found"`. `skipped_absent` can block: for `SEC-AUTHZ` the
 absence of a check is the evidence.
 
-No candidates: one run. Candidates: a second, independent run of the same diff; a
-finding is **confirmed** only if its marker reappears among the second run's
-candidates.
+Findings from all parts are merged by marker. No candidates: done. Candidates with
+confirmation `blocking`: the parts that raised them run again, and a finding is
+**confirmed** only if its marker reappears among the second run's candidates. With
+`never`, every candidate counts as confirmed after one run.
 
 ## 7. Finding marker — `findingMarker` in `src/verdict/verdict.ts`
 
@@ -165,7 +164,7 @@ characters (GitHub's limit is 65,536).
 
 ## 10. Cache
 
-Key: SHA-256 of `PROMPT_VERSION`, model, rendered diff and intent
-(`src/review/cache_key.ts`), kept 24 h. A re-review of an unchanged diff with the same
+Key: SHA-256 of `PROMPT_VERSION`, model, the profile snapshot, the rendered parts and
+intent (`src/review/cache_key.ts`), kept 24 h. A re-review of an unchanged diff with the same
 model reuses the verdict. **Bump `PROMPT_VERSION`
 whenever the prompt changes.**

@@ -12,7 +12,14 @@ import {
   publicCredential,
   replaceAccountToken,
 } from "../accounts/service.js";
+import { githubFor } from "../accounts/service.js";
 import { parsePrRef } from "../github/client.js";
+import { parseDiffOutput } from "../github/parse_diff.js";
+import { chunkDiff, renderChunk } from "../review/chunk.js";
+import { buildUserMessage } from "../review/prompt.js";
+import { CATEGORY_TEXT, MODES, resolveProfile, systemPrompt, type ProfileOptions } from "../review/modes.js";
+import { ensureProfiles, resolveRow } from "../review/profiles.js";
+import { MODEL_CATALOG } from "../providers/index.js";
 import { cancelJob, enqueueReview } from "../jobs/queue.js";
 import { publishJob } from "../jobs/publish.js";
 import { emitItem, pollTarget, previewTarget } from "../scheduler/targets.js";
@@ -20,6 +27,12 @@ import { deleteSecret } from "../store/secrets.js";
 import {
   deleteAccount,
   deleteCredential,
+  deleteProfile,
+  getProfile,
+  insertProfile,
+  setDefaultProfile,
+  updateProfile,
+  type ProfileRow,
   deleteTarget,
   findItem,
   getAccount,
@@ -46,7 +59,28 @@ import type { EventRow, JobRow } from "../store/types.js";
 type Env = { Variables: { user: PublicUser } };
 
 const JOB_COLUMNS =
-  "id, item_id, account_id, account, repo, number, title, url, role, head_sha, status, created_at, started_at, finished_at, outcome, conclusion, verdict_title, findings, blocking, confirmed, runs, tokens_in, tokens_out, cost_usd, model, cached, comment_url, error";
+  "id, item_id, account_id, account, repo, number, title, url, role, head_sha, status, created_at, started_at, finished_at, outcome, conclusion, verdict_title, findings, blocking, confirmed, runs, tokens_in, tokens_out, cost_usd, model, cached, comment_url, error, profile_id, profile_name, mode, chunks";
+
+const ProfileOptionsSchema = Type.Object({
+  model: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+  confirmation: Type.Optional(Type.Union([Type.Literal("never"), Type.Literal("blocking")])),
+  categories: Type.Optional(Type.Array(Type.String())),
+  blocking: Type.Optional(Type.Array(Type.String())),
+  budgetTokens: Type.Optional(Type.Number({ minimum: 4000, maximum: 150000 })),
+  maxChunks: Type.Optional(Type.Number({ minimum: 1, maximum: 20 })),
+  intent: Type.Optional(Type.Union([Type.Literal("pr-body"), Type.Literal("none")])),
+  instructions: Type.Optional(Type.String({ maxLength: 8000 })),
+  customCategories: Type.Optional(Type.Array(Type.Object({ id: Type.String({ pattern: "^[A-Za-z][A-Za-z0-9-]{1,30}$" }), description: Type.String({ minLength: 3, maxLength: 1000 }) }), { maxItems: 20 })),
+});
+
+function profileView(p: ProfileRow) {
+  const options = JSON.parse(p.options_json) as ProfileOptions;
+  const resolved = resolveProfile(p.mode, options);
+  return {
+    id: p.id, name: p.name, mode: p.mode, options, version: p.version, isDefault: p.is_default === 1, updatedAt: p.updated_at,
+    resolved: { categories: resolved.categories.map((c) => c.id), blocking: resolved.blocking, confirmation: resolved.confirmation, budgetTokens: resolved.budgetTokens, maxChunks: resolved.maxChunks },
+  };
+}
 
 async function body<S extends TSchema>(c: Context, schema: S): Promise<Static<S> | Response> {
   const raw: unknown = await c.req.json().catch(() => undefined);
@@ -86,6 +120,7 @@ const TargetSchema = Type.Object({
   filters: Type.Optional(FiltersSchema),
   automation: Type.Optional(Type.Union([Type.Literal("manual"), Type.Literal("auto-review")])),
   model: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+  profileId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
   pollSec: Type.Optional(Type.Number({ minimum: 30, maximum: 86400 })),
   enabled: Type.Optional(Type.Boolean()),
 });
@@ -110,6 +145,7 @@ export function targetView(rt: Runtime, t: TargetRow) {
     model: t.model,
     pollSec: t.poll_sec,
     enabled: t.enabled === 1,
+    profileId: t.profile_id,
     lastPolledAt: t.last_polled_at,
     lastError: t.last_error,
     nextPollAt: t.next_poll_at,
@@ -164,6 +200,10 @@ export function apiRoutes(rt: Runtime): Hono<Env> {
       accounts: listAccounts(rt.db, user.id).map((a) => publicAccount(rt, a)),
       credentials: listCredentials(rt.db, user.id).map(publicCredential),
       targets: listTargets(rt.db, user.id).map((t) => targetView(rt, t)),
+      profiles: ensureProfiles(rt.db, user.id).map(profileView),
+      modes: Object.values(MODES).map((m) => ({ id: m.id, label: m.label, description: m.description, output: m.output, categories: m.categories, blocking: m.blocking, confirmation: m.confirmation })),
+      categoryText: CATEGORY_TEXT,
+      catalog: MODEL_CATALOG,
       stages: Object.fromEntries([...rt.stages].filter(([id]) => (rt.db.query("SELECT 1 FROM jobs WHERE id = ? AND user_id = ?").get(id, user.id) !== null))),
       totals: rt.db
         .query(
@@ -250,13 +290,14 @@ export function apiRoutes(rt: Runtime): Hono<Env> {
     if (job === null) return c.json({ error: "not found" }, 404);
     const events = rt.db.query("SELECT * FROM events WHERE job_id = ? ORDER BY id").all(id) as EventRow[];
     const { result, ...rest } = job;
-    return c.json({ review: rest, result: result !== null ? JSON.parse(result) : null, events, stage: rt.stages.get(id) ?? null });
+    const runs = rt.db.query("SELECT * FROM runs WHERE job_id = ? ORDER BY id").all(id);
+    return c.json({ review: rest, result: result !== null ? JSON.parse(result) : null, events, runs, stage: rt.stages.get(id) ?? null });
   });
 
   api.post("/reviews", async (c) => {
-    const b = await body(c, Type.Object({ itemId: Type.String(), model: Type.Optional(Type.String()) }));
+    const b = await body(c, Type.Object({ itemId: Type.String(), model: Type.Optional(Type.String()), profileId: Type.Optional(Type.String()) }));
     if (b instanceof Response) return b;
-    const queued = enqueueReview(rt, c.var.user.id, b.itemId, b.model);
+    const queued = enqueueReview(rt, c.var.user.id, b.itemId, { ...(b.model ? { model: b.model } : {}), ...(b.profileId ? { profileId: b.profileId } : {}) });
     return "error" in queued ? c.json(queued, 409) : c.json({ id: queued.job.id }, 202);
   });
 
@@ -288,9 +329,11 @@ export function apiRoutes(rt: Runtime): Hono<Env> {
       label: Type.Optional(Type.String({ minLength: 1, maxLength: 60 })),
       credentialId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
       model: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+      profileId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
     }));
     if (b instanceof Response) return b;
     const account = getAccount(rt.db, c.var.user.id, c.req.param("id"));
+    if (b.profileId && getProfile(rt.db, c.var.user.id, b.profileId) === null) return c.json({ error: "no such profile" }, 400);
     if (account === null) return c.json({ error: "not found" }, 404);
     if (b.credentialId && getCredential(rt.db, c.var.user.id, b.credentialId) === null) return c.json({ error: "no such credential" }, 400);
     if (b.model && !rt.models().includes(b.model)) return c.json({ error: `model ${b.model} is not allowed` }, 400);
@@ -298,6 +341,7 @@ export function apiRoutes(rt: Runtime): Hono<Env> {
       ...(b.label !== undefined ? { label: b.label } : {}),
       ...(b.credentialId !== undefined ? { credential_id: b.credentialId } : {}),
       ...(b.model !== undefined ? { model: b.model } : {}),
+      ...(b.profileId !== undefined ? { profile_id: b.profileId } : {}),
     });
     return c.json({ account: publicAccount(rt, getAccount(rt.db, c.var.user.id, account.id)!) });
   });
@@ -387,6 +431,7 @@ export function apiRoutes(rt: Runtime): Hono<Env> {
     const invalid = validTargetParams(b.type, b.params);
     if (invalid) return c.json({ error: invalid }, 400);
     if (b.model && !rt.models().includes(b.model)) return c.json({ error: `model ${b.model} is not allowed` }, 400);
+    if (b.profileId && getProfile(rt.db, c.var.user.id, b.profileId) === null) return c.json({ error: "no such profile" }, 400);
     const target = insertTarget(rt.db, {
       user_id: c.var.user.id, account_id: b.accountId, name: b.name, type: b.type, params: b.params,
       ...(b.filters ? { filters: b.filters } : {}),
@@ -395,6 +440,7 @@ export function apiRoutes(rt: Runtime): Hono<Env> {
       ...(b.pollSec ? { poll_sec: b.pollSec } : {}),
       enabled: b.enabled === false ? 0 : 1,
     });
+    if (b.profileId) updateTarget(rt.db, c.var.user.id, target.id, { profile_id: b.profileId });
     void rt.requestPoll(target.id);
     return c.json({ target: targetView(rt, target) }, 201);
   });
@@ -410,6 +456,7 @@ export function apiRoutes(rt: Runtime): Hono<Env> {
     const invalid = validTargetParams(type, params);
     if (invalid) return c.json({ error: invalid }, 400);
     if (b.model && !rt.models().includes(b.model)) return c.json({ error: `model ${b.model} is not allowed` }, 400);
+    if (b.profileId && getProfile(rt.db, c.var.user.id, b.profileId) === null) return c.json({ error: "no such profile" }, 400);
     updateTarget(rt.db, c.var.user.id, target.id, {
       ...(b.accountId ? { account_id: b.accountId } : {}),
       ...(b.name ? { name: b.name } : {}),
@@ -418,6 +465,7 @@ export function apiRoutes(rt: Runtime): Hono<Env> {
       ...(b.filters ? { filters_json: JSON.stringify(b.filters) } : {}),
       ...(b.automation ? { automation: b.automation } : {}),
       ...(b.model !== undefined ? { model: b.model } : {}),
+      ...(b.profileId !== undefined ? { profile_id: b.profileId } : {}),
       ...(b.pollSec ? { poll_sec: b.pollSec } : {}),
       ...(b.enabled !== undefined ? { enabled: b.enabled ? 1 : 0 } : {}),
       next_poll_at: 0,
@@ -447,6 +495,107 @@ export function apiRoutes(rt: Runtime): Hono<Env> {
   api.post("/poll", async (c) => {
     for (const t of listTargets(rt.db, c.var.user.id).filter((t) => t.enabled)) await rt.requestPoll(t.id);
     return c.json({ ok: true });
+  });
+
+  // ── profiles ─────────────────────────────────────────────────────
+  api.get("/profiles", (c) => c.json({ profiles: ensureProfiles(rt.db, c.var.user.id).map(profileView) }));
+
+  const ProfileBody = Type.Object({ name: Type.String({ minLength: 1, maxLength: 60 }), mode: Type.String(), options: ProfileOptionsSchema });
+  function checkProfile(b: { mode: string; options: ProfileOptions }): string | null {
+    if (!MODES[b.mode]) return `unknown mode ${b.mode}`;
+    if (b.options.model && !rt.models().includes(b.options.model)) return `model ${b.options.model} is not allowed`;
+    if (b.mode === "custom" && !b.options.customCategories?.length) return "a custom profile needs at least one category";
+    return null;
+  }
+
+  api.post("/profiles", async (c) => {
+    const b = await body(c, ProfileBody);
+    if (b instanceof Response) return b;
+    const invalid = checkProfile(b);
+    if (invalid) return c.json({ error: invalid }, 400);
+    ensureProfiles(rt.db, c.var.user.id);
+    return c.json({ profile: profileView(insertProfile(rt.db, { user_id: c.var.user.id, name: b.name, mode: b.mode, options: b.options })) }, 201);
+  });
+
+  api.patch("/profiles/:id", async (c) => {
+    const b = await body(c, Type.Partial(ProfileBody));
+    if (b instanceof Response) return b;
+    const p = getProfile(rt.db, c.var.user.id, c.req.param("id"));
+    if (p === null) return c.json({ error: "not found" }, 404);
+    const merged = { mode: b.mode ?? p.mode, options: b.options ?? (JSON.parse(p.options_json) as ProfileOptions) };
+    const invalid = checkProfile(merged);
+    if (invalid) return c.json({ error: invalid }, 400);
+    updateProfile(rt.db, c.var.user.id, p.id, { ...(b.name ? { name: b.name } : {}), mode: merged.mode, options: merged.options });
+    return c.json({ profile: profileView(getProfile(rt.db, c.var.user.id, p.id)!) });
+  });
+
+  api.post("/profiles/:id/default", (c) => {
+    const p = getProfile(rt.db, c.var.user.id, c.req.param("id"));
+    if (p === null) return c.json({ error: "not found" }, 404);
+    setDefaultProfile(rt.db, c.var.user.id, p.id);
+    return c.json({ profiles: ensureProfiles(rt.db, c.var.user.id).map(profileView) });
+  });
+
+  api.delete("/profiles/:id", (c) => {
+    const p = getProfile(rt.db, c.var.user.id, c.req.param("id"));
+    if (p === null) return c.json({ error: "not found" }, 404);
+    if (p.is_default) return c.json({ error: "make another profile the default first" }, 409);
+    deleteProfile(rt.db, c.var.user.id, p.id);
+    rt.db.query("UPDATE accounts SET profile_id = NULL WHERE profile_id = ? AND user_id = ?").run(p.id, c.var.user.id);
+    rt.db.query("UPDATE targets SET profile_id = NULL WHERE profile_id = ? AND user_id = ?").run(p.id, c.var.user.id);
+    return c.json({ ok: true });
+  });
+
+  /** The exact prompt the profile would send for an item: system prompt plus the first part. */
+  api.post("/profiles/:id/preview", async (c) => {
+    const b = await body(c, Type.Object({ itemId: Type.String() }));
+    if (b instanceof Response) return b;
+    const p = getProfile(rt.db, c.var.user.id, c.req.param("id"));
+    const item = getItem(rt.db, c.var.user.id, b.itemId);
+    if (p === null || item === null) return c.json({ error: "not found" }, 404);
+    const account = getAccount(rt.db, c.var.user.id, item.account_id);
+    if (account === null) return c.json({ error: "not found" }, 404);
+    try {
+      const gh = githubFor(rt, account);
+      const [pr, raw] = await Promise.all([gh.pull(item.repo, item.number), gh.pullDiff(item.repo, item.number)]);
+      const resolved = resolveRow(p);
+      const diff = chunkDiff(parseDiffOutput(raw), { budgetTokens: resolved.budgetTokens, maxChunks: resolved.maxChunks });
+      const context = { repo: item.repo, number: item.number, title: pr.title, headSha: pr.headSha, baseSha: pr.baseSha, branch: pr.headRef };
+      const user = diff.chunks[0] ? buildUserMessage(context, renderChunk(diff, diff.chunks[0]), resolved.intent === "pr-body" && pr.body.trim() ? pr.body : undefined) : "(empty diff)";
+      return c.json({ system: systemPrompt(resolved), user, chunks: diff.chunks.length, tokens: diff.tokenEstimate, skipped: diff.skippedFiles });
+    } catch (error) {
+      return fail(c, new InputError(error instanceof Error ? error.message : String(error)));
+    }
+  });
+
+  // ── insights ─────────────────────────────────────────────────────
+  api.get("/insights", (c) => {
+    const days = Math.min(Number(c.req.query("days") ?? 7) || 7, 90);
+    const since = Date.now() - days * 86400_000;
+    const uid = c.var.user.id;
+    const byModel = rt.db.query(
+      `SELECT model, COUNT(*) AS reviews, COALESCE(SUM(runs), 0) AS runs, AVG(finished_at - started_at) AS avg_ms,
+              COALESCE(SUM(tokens_in), 0) AS tokens_in, COALESCE(SUM(tokens_out), 0) AS tokens_out, COALESCE(SUM(cost_usd), 0) AS cost_usd,
+              SUM(conclusion = 'action_required') AS blocking_reviews
+       FROM jobs WHERE user_id = ? AND status = 'done' AND finished_at > ? GROUP BY model ORDER BY reviews DESC`,
+    ).all(uid, since);
+    const byProfile = rt.db.query(
+      `SELECT COALESCE(profile_name, 'Triage (v1)') AS profile, COUNT(*) AS reviews, AVG(finished_at - started_at) AS avg_ms, COALESCE(SUM(cost_usd), 0) AS cost_usd
+       FROM jobs WHERE user_id = ? AND status = 'done' AND finished_at > ? GROUP BY 1 ORDER BY reviews DESC`,
+    ).all(uid, since);
+    const byDay = rt.db.query(
+      `SELECT date(finished_at / 1000, 'unixepoch') AS day, COUNT(*) AS reviews, SUM(status = 'error') AS failed, COALESCE(SUM(cost_usd), 0) AS cost_usd
+       FROM jobs WHERE user_id = ? AND finished_at > ? GROUP BY 1 ORDER BY 1`,
+    ).all(uid, since);
+    const categories: Record<string, number> = {};
+    const posted = rt.db.query("SELECT COUNT(*) AS n FROM jobs WHERE user_id = ? AND comment_url IS NOT NULL AND finished_at > ?").get(uid, since) as { n: number };
+    for (const row of rt.db.query("SELECT result FROM jobs WHERE user_id = ? AND status = 'done' AND finished_at > ? AND result IS NOT NULL").all(uid, since) as { result: string }[]) {
+      for (const f of (JSON.parse(row.result) as { findings?: { category: string }[] }).findings ?? []) categories[f.category] = (categories[f.category] ?? 0) + 1;
+    }
+    const confirmRuns = rt.db.query(
+      `SELECT COUNT(*) AS confirmations, SUM(confirmed > 0) AS agreed FROM jobs WHERE user_id = ? AND status = 'done' AND finished_at > ? AND blocking > 0`,
+    ).get(uid, since);
+    return c.json({ days, byModel, byProfile, byDay, categories, posted: posted.n, confirmation: confirmRuns });
   });
 
   // ── logs & settings ──────────────────────────────────────────────

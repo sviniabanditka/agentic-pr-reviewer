@@ -72,6 +72,8 @@ Afterwards the v1 variables can be removed from the Secret and `config.json` del
 | targets | List with last poll and errors; editor with presets, filters, automation and a live preview |
 | accounts | GitHub accounts (token, label, credential, default model, check, replace, remove) and Claude credentials (limits, check, remove) |
 | activity | Live log with level filter, grep and follow |
+| profiles | Review recipes: mode, model, categories and which block, confirmation, budget, instructions; prompt preview on a real PR |
+| activity → insights | Reviews by model, profile and day; findings by category; how often the second run agreed |
 | settings | Models list (admin) |
 
 ## Troubleshooting

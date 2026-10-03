@@ -18,7 +18,7 @@ const PRESETS: { label: string; query: string; role: TargetParams["role"] }[] = 
 interface Draft {
   id: string | null; accountId: string; name: string; type: Target["type"]; query: string; repo: string; number: string;
   role: NonNullable<TargetParams["role"]>; drafts: boolean; bots: boolean; owners: string; labelsInclude: string; labelsExclude: string;
-  authorsInclude: string; authorsExclude: string; maxChangedFiles: string; automation: Target["automation"]; model: string; pollSec: number; enabled: boolean;
+  authorsInclude: string; authorsExclude: string; maxChangedFiles: string; automation: Target["automation"]; model: string; profileId: string; pollSec: number; enabled: boolean;
 }
 const editing = ref<Draft | null>(null);
 const preview = ref<{ repo: string; number: number; title: string; author: string; draft: boolean; url: string }[] | null>(null);
@@ -29,7 +29,7 @@ const list = (s: string) => s.split(",").map((x) => x.trim()).filter(Boolean);
 function blank(): Draft {
   return { id: null, accountId: store.accounts[0]?.id ?? "", name: "", type: "search", query: "review-requested:@me", repo: "", number: "", role: "review_requested",
     drafts: false, bots: false, owners: "", labelsInclude: "", labelsExclude: "", authorsInclude: "", authorsExclude: "", maxChangedFiles: "",
-    automation: "manual", model: "", pollSec: 60, enabled: true };
+    automation: "manual", model: "", profileId: "", pollSec: 60, enabled: true };
 }
 function edit(t: Target) {
   const f = t.filters;
@@ -37,7 +37,7 @@ function edit(t: Target) {
     number: t.params.number ? String(t.params.number) : "", role: t.params.role ?? "watching", drafts: !!f.drafts, bots: !!f.bots,
     owners: (f.owners ?? []).join(", "), labelsInclude: (f.labelsInclude ?? []).join(", "), labelsExclude: (f.labelsExclude ?? []).join(", "),
     authorsInclude: (f.authorsInclude ?? []).join(", "), authorsExclude: (f.authorsExclude ?? []).join(", "), maxChangedFiles: f.maxChangedFiles ? String(f.maxChangedFiles) : "",
-    automation: t.automation, model: t.model ?? "", pollSec: t.pollSec, enabled: t.enabled };
+    automation: t.automation, model: t.model ?? "", profileId: t.profileId ?? "", pollSec: t.pollSec, enabled: t.enabled };
   preview.value = null;
 }
 function payload(d: Draft) {
@@ -49,7 +49,7 @@ function payload(d: Draft) {
   if (d.authorsInclude) filters.authorsInclude = list(d.authorsInclude);
   if (d.authorsExclude) filters.authorsExclude = list(d.authorsExclude);
   if (d.maxChangedFiles) filters.maxChangedFiles = Number(d.maxChangedFiles);
-  return { accountId: d.accountId, name: d.name || (d.type === "search" ? d.query : d.repo), type: d.type, params, filters, automation: d.automation, model: d.model || null, pollSec: d.pollSec, enabled: d.enabled };
+  return { accountId: d.accountId, name: d.name || (d.type === "search" ? d.query : d.repo), type: d.type, params, filters, automation: d.automation, model: d.model || null, profileId: d.profileId || null, pollSec: d.pollSec, enabled: d.enabled };
 }
 async function runPreview() {
   previewing.value = true;
@@ -144,6 +144,7 @@ const autoPostWarning = computed(() => editing.value?.automation === "auto-revie
       <div class="grid gap-4 md:grid-cols-3">
         <label><span class="label">automation</span><select v-model="editing.automation" class="field"><option value="manual">manual — list only</option><option value="auto-review">auto-review new commits (results stay private)</option></select></label>
         <label><span class="label">model for automatic reviews</span><select v-model="editing.model" class="field"><option value="">account default</option><option v-for="m in store.models" :key="m" :value="m">{{ m }}</option></select></label>
+        <label><span class="label">profile for automatic reviews</span><select v-model="editing.profileId" class="field"><option value="">account default</option><option v-for="p in store.profiles" :key="p.id" :value="p.id">{{ p.name.toLowerCase() }}</option></select></label>
       </div>
       <p v-if="autoPostWarning" class="m-0 text-warn">// auto-review spends your claude quota on every new push it finds. nothing is posted without your press.</p>
       <div class="flex flex-wrap items-center gap-1">

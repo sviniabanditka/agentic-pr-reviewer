@@ -15,10 +15,10 @@
 
 | Area | Files |
 |---|---|
-| Engine | `tests/review/*`, `tests/verdict/*`, `tests/github/{comment,parse_diff}.test.ts` |
+| Engine | `tests/review/*` (diff, chunking, modes, pipeline over parts, Claude output), `tests/verdict/*`, `tests/github/{comment,parse_diff}.test.ts` |
 | GitHub client | `tests/github/client.test.ts` against `tests/fakes/github.ts` |
 | Store | `tests/store/*`: migrations (incl. adopting a v1 database), secrets, no token literals in the repo |
-| API | `tests/api/*`: auth, CSRF, accounts, credentials, targets and filters, add by URL, the full review → publish cycle, auto-review, isolation between users, v1 import |
+| API | `tests/api/*`: auth, CSRF, accounts, credentials, targets and filters, add by URL, the full review → publish cycle, auto-review, isolation between users, v1 import, profiles, prompt preview, runs, insights |
 
 `tests/api/harness.ts` builds a `Runtime` on an in-memory database with a fake GitHub
 server and a scripted Claude, and a cookie-keeping client. Nothing in the suite talks

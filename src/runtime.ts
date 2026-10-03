@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { Bus } from "./events/bus.js";
-import { callClaude, probeLimits, type ClaudeLimits, type ClaudeSettings, type RunResult } from "./review/claude.js";
+import { callClaude, probeLimits, type ClaudeLimits, type ClaudeRequest, type ClaudeSettings, type RunResult } from "./review/claude.js";
 import { getSetting } from "./store/repos.js";
 import type { SecretBox } from "./store/secrets.js";
 import type { RateWindow } from "./github/client.js";
@@ -12,7 +12,7 @@ export const DEFAULT_MODELS = ["sonnet", "opus", "haiku"];
 /** Outside services, swappable in tests. */
 export interface Deps {
   githubBase: string | undefined;
-  callClaude: (userMessage: string, settings: ClaudeSettings) => Promise<RunResult>;
+  callClaude: (req: ClaudeRequest, settings: ClaudeSettings) => Promise<RunResult>;
   probeLimits: (settings: ClaudeSettings) => Promise<ClaudeLimits | undefined>;
 }
 

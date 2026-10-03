@@ -9,8 +9,8 @@ export interface CheckVerdict {
 
 // A hallucinated quote (not_found) never blocks; skipped_absent may — for
 // SEC-AUTHZ the absence of a check is itself the evidence.
-export function isBlockingCandidate(f: VerifiedFinding): boolean {
-  return (BLOCKING_CATEGORIES as readonly string[]).includes(f.category) && f.evidenceCheck !== "not_found";
+export function isBlockingCandidate(f: VerifiedFinding, blocking: readonly string[] = BLOCKING_CATEGORIES): boolean {
+  return blocking.includes(f.category) && f.evidenceCheck !== "not_found";
 }
 
 export function checkVerdict(
@@ -31,9 +31,10 @@ export function checkVerdict(
 }
 
 // A finding's identity across runs: line numbers shift and model-worded claims vary,
-// so the hash anchors on quoted evidence (code), not prose.
-export function findingMarker(f: Finding): string {
-  const anchor = f.evidence.trim().length > 0 ? f.evidence : f.claim;
+// so the hash anchors on code — the quoted evidence, or for an absence finding the line
+// the pipeline found at its position — and on the claim only when there is neither.
+export function findingMarker(f: Finding & { anchor?: string }): string {
+  const anchor = f.evidence.trim().length > 0 ? f.evidence : f.anchor?.trim() ? f.anchor : f.claim;
   const normalized = anchor
     .split("\n")
     .map((line) => line.trim())
@@ -41,7 +42,7 @@ export function findingMarker(f: Finding): string {
     .join("\n")
     .toLowerCase();
   const hash12 = sha256Hex(`${f.category}|${f.file}|${normalized}`).slice(0, 12);
-  return `<!-- triage:v2:${f.category}:${f.file}:${hash12} -->`;
+  return `<!-- triage:v3:${f.category}:${f.file}:${hash12} -->`;
 }
 
 export function sha256Hex(input: string): string {

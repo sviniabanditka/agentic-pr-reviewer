@@ -1,4 +1,5 @@
-import { getAccountAny, getItem } from "../store/repos.js";
+import { getAccountAny, getItem, getProfile } from "../store/repos.js";
+import { defaultProfile, resolveRow } from "../review/profiles.js";
 import type { Runtime } from "../runtime.js";
 import type { JobRow } from "../store/types.js";
 
@@ -8,14 +9,23 @@ export type Queued = { job: JobRow } | { error: string };
  * Queues a review of one of the user's items. The item must already exist (found by a
  * target or added by URL), so a review can never be started for an arbitrary repository.
  */
-export function enqueueReview(rt: Runtime, userId: string, itemId: string, requestedModel?: string, source = "panel"): Queued {
+export interface EnqueueOptions {
+  model?: string;
+  profileId?: string;
+}
+
+export function enqueueReview(rt: Runtime, userId: string, itemId: string, opts: EnqueueOptions = {}, source = "panel"): Queued {
   const item = getItem(rt.db, userId, itemId);
   if (item === null) return { error: "no such pull request" };
   if (item.head_sha === null) return { error: "the pull request has not been fetched yet; refresh and retry" };
   const account = getAccountAny(rt.db, item.account_id);
   if (account === null) return { error: "the account of this pull request was removed" };
   if (account.credential_id === null) return { error: `no Claude credential attached to @${account.login}` };
-  const model = requestedModel ?? account.model ?? rt.models()[0]!;
+  const profileId = opts.profileId ?? account.profile_id ?? null;
+  const profile = profileId ? getProfile(rt.db, userId, profileId) : defaultProfile(rt.db, userId);
+  if (profile === null) return { error: "no such profile" };
+  const resolved = resolveRow(profile);
+  const model = opts.model ?? resolved.model ?? account.model ?? rt.models()[0]!;
   if (!rt.models().includes(model)) return { error: `model ${model} is not allowed` };
 
   const active = rt.db.query("SELECT id FROM jobs WHERE item_id = ? AND status IN ('queued', 'running')").get(item.id);
@@ -23,11 +33,13 @@ export function enqueueReview(rt: Runtime, userId: string, itemId: string, reque
 
   const job = rt.db
     .query(
-      `INSERT INTO jobs (user_id, account_id, item_id, account, repo, number, title, url, role, head_sha, model, status, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?) RETURNING *`,
+      `INSERT INTO jobs (user_id, account_id, item_id, account, repo, number, title, url, role, head_sha, model, status, created_at,
+         profile_id, profile_name, profile_json, mode)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?) RETURNING *`,
     )
-    .get(userId, account.id, item.id, account.label, item.repo, item.number, item.title, item.url, item.role, item.head_sha, model, Date.now()) as JobRow;
-  rt.log("info", `queued ${item.repo}#${item.number} @${item.head_sha.slice(0, 7)} with ${model} (${source})`, { account: account.label, jobId: job.id, userId });
+    .get(userId, account.id, item.id, account.label, item.repo, item.number, item.title, item.url, item.role, item.head_sha, model, Date.now(),
+      profile.id, profile.name, JSON.stringify({ mode: profile.mode, options: JSON.parse(profile.options_json), version: profile.version }), profile.mode) as JobRow;
+  rt.log("info", `queued ${item.repo}#${item.number} @${item.head_sha.slice(0, 7)}: ${profile.name} with ${model} (${source})`, { account: account.label, jobId: job.id, userId });
   emitJob(rt, job);
   rt.kickWorker();
   return { job };

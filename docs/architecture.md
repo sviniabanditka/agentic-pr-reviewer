@@ -27,7 +27,9 @@ worker. SQLite on a persistent volume holds everything.
 | `credentials` | A Claude subscription token (→ `secrets`), label, health, last usage windows |
 | `targets` | What to watch: `search` (qualifiers), `repo`, `pr`; filters (drafts, bots, labels, authors, owners, size), role, automation (`manual` / `auto-review`), model, poll interval, last error |
 | `items` | A PR found by one or more targets: head/base sha, state (`open`, `closed`, `merged`, `unmatched`, `archived`), role, labels, size, the comment id |
-| `jobs` | A review: item, account, model, status, verdict, counts, usage, full result JSON, comment URL once posted |
+| `profiles` | A user's review recipes: mode + options, version, default flag |
+| `jobs` | A review: item, account, profile snapshot, mode, model, parts, status, verdict, counts, usage, full result JSON, comment URL once posted |
+| `runs` | One model call of a review: purpose (review/confirm), part, model, duration, outcome, tokens, API-price estimate |
 | `events` | The activity log (14 days) |
 | `settings` | Instance settings (models) and the v1-import flag |
 | `cache` | Verdicts by prompt version + model + diff + intent (24 h) |

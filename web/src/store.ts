@@ -1,6 +1,6 @@
 import { reactive } from "vue";
 import { api } from "./api";
-import type { Account, Credential, Item, LogEvent, Review, Stage, Target, Totals, User } from "./types";
+import type { Account, Credential, Item, LogEvent, Mode, ModelInfo, Profile, Review, Stage, Target, Totals, User } from "./types";
 
 export const store = reactive({
   user: null as User | null,
@@ -12,6 +12,10 @@ export const store = reactive({
   accounts: [] as Account[],
   credentials: [] as Credential[],
   targets: [] as Target[],
+  profiles: [] as Profile[],
+  modes: [] as Mode[],
+  categoryText: {} as Record<string, string>,
+  catalog: [] as ModelInfo[],
   items: new Map<string, Item>(),
   reviews: new Map<number, Review>(),
   stages: {} as Record<number, Stage>,
@@ -25,7 +29,8 @@ setInterval(() => (store.now = Date.now()), 1000);
 
 interface StateResponse {
   user: User; startedAt: number; models: string[]; providers: string[]; accounts: Account[]; credentials: Credential[];
-  targets: Target[]; stages: Record<number, Stage>; totals: Totals;
+  targets: Target[]; stages: Record<number, Stage>; totals: Totals; profiles: Profile[]; modes: Mode[];
+  categoryText: Record<string, string>; catalog: ModelInfo[];
 }
 
 export async function loadState(): Promise<void> {
@@ -37,7 +42,8 @@ export async function loadState(): Promise<void> {
   ]);
   Object.assign(store, {
     user: state.user, startedAt: state.startedAt, models: state.models, providers: state.providers, accounts: state.accounts,
-    credentials: state.credentials, targets: state.targets, stages: state.stages, totals: state.totals, ready: true,
+    credentials: state.credentials, targets: state.targets, stages: state.stages, totals: state.totals, profiles: state.profiles,
+    modes: state.modes, categoryText: state.categoryText, catalog: state.catalog, ready: true,
   });
   store.items = new Map(items.items.map((i) => [i.id, i]));
   store.reviews = new Map(reviews.reviews.map((r) => [r.id, r]));
@@ -46,7 +52,7 @@ export async function loadState(): Promise<void> {
 
 export async function refreshState(): Promise<void> {
   const state = await api.get<StateResponse>("/state");
-  Object.assign(store, { accounts: state.accounts, credentials: state.credentials, targets: state.targets, totals: state.totals, models: state.models });
+  Object.assign(store, { accounts: state.accounts, credentials: state.credentials, targets: state.targets, totals: state.totals, models: state.models, profiles: state.profiles });
 }
 
 type Listener = (r: Review, previous: Review | undefined) => void;

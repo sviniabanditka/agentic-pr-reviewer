@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 import { api } from "../api";
 import { accountOf, store } from "../store";
-import { preferredModel, publishReview, rememberModel, startReview } from "../actions";
+import { preferredModel, preferredProfile, publishReview, rememberModel, rememberProfile, startReview } from "../actions";
 import { openReview } from "../router";
 import { dur, roleLabel, sha7, stamp, verdictWord } from "../format";
 import type { Review } from "../types";
@@ -20,6 +20,8 @@ const last = computed(() => reviews.value[0]);
 const busy = computed(() => last.value?.status === "queued" || last.value?.status === "running");
 const model = ref(preferredModel(props.id, account.value?.model));
 watch(model, (m) => rememberModel(props.id, m));
+const profile = ref(preferredProfile(props.id, account.value?.profileId));
+watch(profile, (p) => rememberProfile(props.id, p));
 
 // Reviews older than the 300 the overview loaded still belong on this page.
 watch(() => props.id, async (id) => {
@@ -60,8 +62,9 @@ async function archive(on: boolean) {
       <div v-if="item.labels.length" class="flex flex-wrap gap-2"><span v-for="l in item.labels" :key="l" class="text-info">#{{ l }}</span></div>
       <div class="flex flex-wrap items-center gap-1">
         <a :href="item.url" target="_blank" rel="noopener" class="rounded-sm px-1 py-0.5 text-secondary hover:bg-hover"><span class="text-tertiary">[</span> open on github ↗ <span class="text-tertiary">]</span></a>
-        <select v-model="model" class="field ml-2 w-auto py-1" :disabled="busy" aria-label="model"><option v-for="m in store.models" :key="m" :value="m">{{ m }}</option></select>
-        <TBtn tone="primary" :disabled="busy || !account?.credentialId || item.state !== 'open'" @click="startReview(item.id, model)">{{ busy ? "in progress" : last ? "re-review" : "review" }}</TBtn>
+        <select v-model="profile" class="field ml-2 w-auto py-1" :disabled="busy" aria-label="profile"><option v-for="p in store.profiles" :key="p.id" :value="p.id">{{ p.name.toLowerCase() }}</option></select>
+        <select v-model="model" class="field w-auto py-1" :disabled="busy" aria-label="model"><option v-for="m in store.models" :key="m" :value="m">{{ m }}</option></select>
+        <TBtn tone="primary" :disabled="busy || !account?.credentialId || item.state !== 'open'" @click="startReview(item.id, model, profile)">{{ busy ? "in progress" : last ? "re-review" : "review" }}</TBtn>
         <TBtn v-if="last?.status === 'done' && !last.comment_url" tone="ok" :busy="posting" :confirm="`post as @${account?.login} → ${item.repo.split('/')[1]} #${item.number}`" @click="post">post last review</TBtn>
         <TBtn v-if="item.state !== 'archived'" @click="archive(true)">archive</TBtn>
         <TBtn v-else @click="archive(false)">unarchive</TBtn>
@@ -76,7 +79,7 @@ async function archive(on: boolean) {
           <TGlyph :review="r" class="text-center" />
           <div class="min-w-0">
             <div :class="r.status === 'done' ? (r.conclusion === 'success' ? 'text-ok' : 'text-danger') : r.status === 'error' ? 'text-warn' : 'text-accent'">{{ r.verdict_title ?? verdictWord(r) }}</div>
-            <div class="text-[13px] text-tertiary">#{{ r.id }} · <span class="text-accent2">{{ sha7(r.head_sha) }}</span> · {{ r.model }} · {{ r.finished_at && r.started_at ? dur(r.finished_at - r.started_at) : "" }}
+            <div class="text-[13px] text-tertiary">#{{ r.id }} · <span class="text-accent2">{{ sha7(r.head_sha) }}</span> · {{ (r.profile_name ?? "triage").toLowerCase() }} · {{ r.model }} · {{ r.finished_at && r.started_at ? dur(r.finished_at - r.started_at) : "" }}
               <span v-if="r.comment_url" class="text-ok"> · posted</span><span v-else-if="r.status === 'done'"> · not posted</span>
               <span v-if="r.status === 'error'" class="text-warn"> · {{ r.error }}</span></div>
           </div>

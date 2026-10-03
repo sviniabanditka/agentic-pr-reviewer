@@ -12,6 +12,7 @@ const nav = [
   { to: "/", label: "overview", name: "overview" },
   { to: "/inbox", label: "inbox", name: "inbox" },
   { to: "/targets", label: "targets", name: "targets" },
+  { to: "/profiles", label: "profiles", name: "profiles" },
   { to: "/accounts", label: "accounts", name: "accounts" },
   { to: "/activity", label: "activity", name: "activity" },
   { to: "/settings", label: "settings", name: "settings" },

@@ -5,7 +5,7 @@ import { api } from "../api";
 import { accountOf, onReviewChange, store } from "../store";
 import { cancelReview, publishReview, startReview } from "../actions";
 import { BLOCKING, clock, dur, roleLabel, sha7, stamp } from "../format";
-import type { Finding, LogEvent, Review, ReviewResult } from "../types";
+import type { Finding, LogEvent, Review, ReviewResult, Run } from "../types";
 import Drawer from "./Drawer.vue";
 import TBtn from "./TBtn.vue";
 import TGlyph from "./TGlyph.vue";
@@ -14,7 +14,7 @@ import { toast } from "./toast";
 const route = useRoute();
 const router = useRouter();
 const id = computed(() => (route.query.review ? Number(route.query.review) : null));
-const data = ref<{ review: Review; result: ReviewResult | null; events: LogEvent[] } | null>(null);
+const data = ref<{ review: Review; result: ReviewResult | null; events: LogEvent[]; runs: Run[] } | null>(null);
 const loading = ref(false);
 const posting = ref(false);
 
@@ -51,12 +51,13 @@ const groups = computed(() => {
   const res = data.value?.result;
   if (!res) return [];
   const confirmed = new Set(res.confirmedMarkers);
+  const blockingSet = res.blocking ?? BLOCKING;
   const isConfirmed = (f: Finding) => [...confirmed].some((m) => m.includes(`:${f.category}:${f.file}:`));
-  const blocking = res.findings.filter((f) => BLOCKING.includes(f.category) && f.evidenceCheck !== "not_found");
+  const blocking = res.findings.filter((f) => blockingSet.includes(f.category) && f.evidenceCheck !== "not_found");
   return [
     { title: "blocking", list: blocking.filter(isConfirmed), tone: "danger" },
     { title: "blocking, not confirmed by a second run", list: blocking.filter((f) => !isConfirmed(f)), tone: "warn" },
-    { title: "notes", list: res.findings.filter((f) => !BLOCKING.includes(f.category) && f.evidenceCheck !== "not_found"), tone: "accent" },
+    { title: "notes", list: res.findings.filter((f) => !blockingSet.includes(f.category) && f.evidenceCheck !== "not_found"), tone: "accent" },
     { title: "low confidence — quoted code not found in the diff", list: res.findings.filter((f) => f.evidenceCheck === "not_found"), tone: "faint" },
   ].filter((g) => g.list.length);
 });
@@ -112,7 +113,7 @@ const toneBorder: Record<string, string> = { danger: "border-l-danger", warn: "b
             {{ otherPosted ? "replace pr comment" : "post to pr" }}
           </TBtn>
           <TBtn v-if="live.status === 'queued'" tone="danger" @click="cancelReview(live.id)">cancel</TBtn>
-          <TBtn v-if="item && !busy && item.state === 'open'" @click="startReview(item.id, live.model ?? undefined)">review again</TBtn>
+          <TBtn v-if="item && !busy && item.state === 'open'" @click="startReview(item.id, live.model ?? undefined, live.profile_id ?? undefined)">review again</TBtn>
         </div>
       </div>
       <div v-else class="text-tertiary">{{ loading ? "loading…" : "review not found" }}</div>
@@ -138,7 +139,20 @@ const toneBorder: Record<string, string> = { danger: "border-l-danger", warn: "b
         <div><dt class="text-tertiary">tokens in/out</dt><dd class="m-0 text-bright">{{ (live.tokens_in ?? 0).toLocaleString("en") }} / {{ (live.tokens_out ?? 0).toLocaleString("en") }}</dd></div>
         <div><dt class="text-tertiary">at api prices</dt><dd class="m-0 text-bright">${{ (live.cost_usd ?? 0).toFixed(3) }}</dd></div>
         <div><dt class="text-tertiary">your role</dt><dd class="m-0 text-bright">{{ roleLabel(live.role) }}</dd></div>
+        <div><dt class="text-tertiary">profile</dt><dd class="m-0 text-bright">{{ (live.profile_name ?? "triage").toLowerCase() }}</dd></div>
+        <div><dt class="text-tertiary">parts</dt><dd class="m-0 text-bright">{{ live.chunks ?? 1 }}</dd></div>
       </dl>
+
+      <section v-if="data?.result?.summary" class="grid gap-3">
+        <h3 class="m-0 text-sm font-medium text-bright"><span class="text-ok">#</span> pr description draft</h3>
+        <div class="grid gap-3 rounded-md border border-subtle bg-elevated px-4 py-3">
+          <div class="font-medium text-bright">{{ data.result.summary.title }}</div>
+          <p class="m-0 text-secondary">{{ data.result.summary.summary }}</p>
+          <div v-for="[label, list] in ([['changes', data.result.summary.changes], ['risks', data.result.summary.risks], ['how to test', data.result.summary.testing]] as const)" :key="label">
+            <template v-if="list.length"><div class="text-tertiary">{{ label }}</div><ul class="m-0 pl-5 text-secondary"><li v-for="(x, i) in list" :key="i">{{ x }}</li></ul></template>
+          </div>
+        </div>
+      </section>
 
       <section v-for="g in groups" :key="g.title" class="grid gap-3">
         <h3 class="m-0 text-sm font-medium lowercase" :class="toneText[g.tone]"># {{ g.title }} <span class="text-tertiary">({{ g.list.length }})</span></h3>
@@ -160,6 +174,18 @@ const toneBorder: Record<string, string> = { danger: "border-l-danger", warn: "b
       <section v-if="data?.result?.skippedFiles?.length" class="grid gap-2">
         <h3 class="m-0 text-sm font-medium text-tertiary"># not reviewed ({{ data.result.skippedFiles.length }})</h3>
         <div class="text-tertiary"><div v-for="s in data.result.skippedFiles" :key="s.path">{{ s.path }} <span class="text-faint">({{ s.reason.replace("_", " ") }})</span></div></div>
+      </section>
+
+      <section v-if="data?.runs?.length" class="grid gap-2">
+        <h3 class="m-0 text-sm font-medium text-bright"><span class="text-ok">#</span> model runs</h3>
+        <div class="grid gap-0.5 text-[13px]">
+          <div v-for="r in data.runs" :key="r.id" class="grid grid-cols-[130px_70px_1fr_auto] gap-3">
+            <span class="text-secondary">{{ r.purpose }}{{ r.chunks > 1 ? ` ${r.chunk + 1}/${r.chunks}` : "" }}</span>
+            <span class="text-tertiary">{{ dur(r.finished_at - r.started_at) }}</span>
+            <span :class="r.outcome === 'error' || r.outcome === 'didnt_look' ? 'text-warn' : 'text-secondary'">{{ r.outcome.replace("_", " ") }}{{ r.error ? `: ${r.error}` : "" }}</span>
+            <span class="text-faint">{{ (r.tokens_in ?? 0).toLocaleString("en") }}/{{ (r.tokens_out ?? 0).toLocaleString("en") }} tok</span>
+          </div>
+        </div>
       </section>
 
       <section class="grid gap-2">

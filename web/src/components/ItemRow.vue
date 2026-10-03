@@ -2,7 +2,7 @@
 import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
 import { accountOf, store } from "../store";
-import { preferredModel, publishReview, rememberModel, startReview } from "../actions";
+import { preferredModel, preferredProfile, publishReview, rememberModel, rememberProfile, startReview } from "../actions";
 import { openReview } from "../router";
 import { roleLabel, verdictWord } from "../format";
 import type { Item } from "../types";
@@ -18,6 +18,11 @@ const busy = computed(() => last.value?.status === "queued" || last.value?.statu
 const canReview = computed(() => !!account.value?.credentialId && props.item.state === "open");
 const stale = computed(() => last.value?.status === "done" && !!props.item.headSha && last.value.head_sha !== props.item.headSha);
 const model = ref(preferredModel(props.item.id, account.value?.model));
+const profile = ref(preferredProfile(props.item.id, account.value?.profileId));
+function pickProfile(e: Event) {
+  profile.value = (e.target as HTMLSelectElement).value;
+  rememberProfile(props.item.id, profile.value);
+}
 const posting = ref(false);
 
 async function post() {
@@ -56,11 +61,14 @@ function pick(e: Event) {
     <div class="col-start-2 flex flex-wrap items-center gap-1 sm:col-start-3" @click.stop>
       <TBtn v-if="last?.status === 'done' && !last.comment_url" tone="ok" :busy="posting"
         :confirm="`post as @${account?.login}?`" title="post the last review as a pr comment" @click="post">post</TBtn>
+      <select class="field w-auto max-w-40 py-1" :value="profile" :disabled="busy" :aria-label="`profile for ${item.repo} #${item.number}`" @change="pickProfile">
+        <option v-for="p in store.profiles" :key="p.id" :value="p.id">{{ p.name.toLowerCase() }}</option>
+      </select>
       <select class="field w-auto py-1" :value="model" :disabled="busy" :aria-label="`model for ${item.repo} #${item.number}`" @change="pick">
         <option v-for="m in store.models" :key="m" :value="m">{{ m }}</option>
       </select>
       <TBtn tone="primary" :disabled="busy || !canReview" :title="canReview ? '' : item.state !== 'open' ? 'the pull request is not open' : 'attach a claude credential to the account'"
-        @click="startReview(item.id, model)">{{ busy ? "in progress" : last ? "re-review" : "review" }}</TBtn>
+        @click="startReview(item.id, model, profile)">{{ busy ? "in progress" : last ? "re-review" : "review" }}</TBtn>
     </div>
   </li>
 </template>

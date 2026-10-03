@@ -6,6 +6,11 @@ export type EvidenceCheck = "matched" | "not_found" | "skipped_absent";
 /** A finding after its quoted evidence was checked against the diff. */
 export interface VerifiedFinding extends Finding {
   evidenceCheck: EvidenceCheck;
+  /**
+   * For absence findings: the new-side line at line_start, quoted by the pipeline rather
+   * than the model, so the marker survives a reworded claim in the confirmation run.
+   */
+  anchor?: string;
 }
 
 function matchesLine(needle: string, lines: string[]): boolean {
@@ -54,6 +59,11 @@ function normalizeCategory(finding: Finding): Finding {
 export function verifyFindings(findings: Finding[], diff: PreparedDiff): VerifiedFinding[] {
   return findings.map((finding) => {
     const normalized = normalizeCategory(finding);
-    return { ...normalized, evidenceCheck: checkEvidence(normalized, diff) };
+    const verified: VerifiedFinding = { ...normalized, evidenceCheck: checkEvidence(normalized, diff) };
+    if (normalized.evidence_kind === "absent") {
+      const line = diff.files.find((f) => f.path === normalized.file)?.newLines.find((l) => l.line === normalized.line_start);
+      if (line && line.text.trim() !== "") verified.anchor = line.text;
+    }
+    return verified;
   });
 }

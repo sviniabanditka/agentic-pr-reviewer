@@ -112,7 +112,7 @@ export async function pollTarget(rt: Runtime, target: TargetRow): Promise<{ foun
       seen.add(item.id);
       if (target.automation === "auto-review" && newRevision && item.state === "open") {
         const reviewed = rt.db.query("SELECT 1 FROM jobs WHERE item_id = ? AND head_sha = ? AND status != 'error'").get(item.id, item.head_sha);
-        if (reviewed === null && "job" in enqueueReview(rt, target.user_id, item.id, target.model ?? undefined, `auto-review: ${target.name}`)) queued++;
+        if (reviewed === null && "job" in enqueueReview(rt, target.user_id, item.id, { ...(target.model ? { model: target.model } : {}), ...(target.profile_id ? { profileId: target.profile_id } : {}) }, `auto-review: ${target.name}`)) queued++;
       }
     }
     await releaseUnmatched(rt, gh, target, seen);

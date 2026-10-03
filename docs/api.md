@@ -17,7 +17,7 @@ must send `x-requested-with: fetch`; a foreign `Origin` gets `403`. Errors are
 
 ## Overview
 
-`GET /state` → `{user, startedAt, models, providers, accounts, credentials, targets, stages, totals}`
+`GET /state` → `{user, startedAt, models, providers, accounts, credentials, targets, profiles, modes, categoryText, catalog, stages, totals}`
 — the SPA's bootstrap. `stages` maps running review ids to `diff`/`review`/`confirm`;
 `totals` covers the user's finished reviews of the last 24 h.
 
@@ -27,7 +27,7 @@ must send `x-requested-with: fetch`; a foreign `Origin` gets `403`. Errors are
 |---|---|---|
 | GET | `/accounts` | |
 | POST | `/accounts` | `{token, label?}` — checked with `GET /user`, stored encrypted |
-| PATCH | `/accounts/:id` | `{label?, credentialId?, model?}` |
+| PATCH | `/accounts/:id` | `{label?, credentialId?, model?, profileId?}` |
 | PUT | `/accounts/:id/token` | `{token}` |
 | POST | `/accounts/:id/check` | re-checks login, scopes, quota |
 | DELETE | `/accounts/:id` | also removes its targets and items |
@@ -46,7 +46,7 @@ A credential: `{id, provider, label, tokenHint, status, statusDetail, limits: {f
 |---|---|---|
 | GET | `/targets` | |
 | POST | `/targets/preview` | a target body → `{items: [first 20 matches]}`, nothing stored |
-| POST | `/targets` | `{accountId, name, type, params, filters?, automation?, model?, pollSec?, enabled?}` |
+| POST | `/targets` | `{accountId, name, type, params, filters?, automation?, model?, profileId?, pollSec?, enabled?}` |
 | PATCH | `/targets/:id` | any subset |
 | POST | `/targets/:id/poll` | polls now |
 | DELETE | `/targets/:id` | |
@@ -73,10 +73,30 @@ A credential: `{id, provider, label, tokenHint, status, statusDetail, limits: {f
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/reviews?status=&itemId=&limit=` | summaries, newest first |
-| GET | `/reviews/:id` | `{review, result, events, stage}` |
-| POST | `/reviews` | `{itemId, model?}` → 202 `{id}`; 409 when the item is unknown, the account has no credential, the model is not allowed, or a review is already queued/running |
+| GET | `/reviews/:id` | `{review, result, events, runs, stage}` |
+| POST | `/reviews` | `{itemId, model?, profileId?}` → 202 `{id}`; 409 when the item or profile is unknown, the account has no credential, the model is not allowed, or a review is already queued/running |
 | POST | `/reviews/:id/cancel` | queued only |
 | POST | `/reviews/:id/publish` | `{url}`; the only endpoint that writes to GitHub |
+
+## Profiles
+
+| Method | Path | Body / notes |
+|---|---|---|
+| GET | `/profiles` | built-ins are created on first access |
+| POST | `/profiles` | `{name, mode, options}` |
+| PATCH | `/profiles/:id` | any subset; bumps `version` |
+| POST | `/profiles/:id/default` | |
+| DELETE | `/profiles/:id` | not the default; accounts and targets using it fall back to the default |
+| POST | `/profiles/:id/preview` | `{itemId}` → `{system, user, chunks, tokens, skipped}` — the exact prompt for the first part |
+
+`options`: `model`, `confirmation` (`blocking`/`never`), `categories`, `blocking`,
+`budgetTokens` (4,000–150,000), `maxChunks` (1–20), `intent` (`pr-body`/`none`),
+`instructions`, `customCategories` (`[{id, description}]`, custom mode).
+
+## Insights
+
+`GET /insights?days=7|30|90` → `{byModel, byProfile, byDay, categories, posted, confirmation}`
+for the user's finished reviews.
 
 ## Logs and settings
 

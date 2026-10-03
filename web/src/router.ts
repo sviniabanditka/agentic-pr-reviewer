@@ -10,6 +10,7 @@ export const router = createRouter({
     { path: "/items/:id", name: "item", component: () => import("./pages/ItemPage.vue"), props: true },
     { path: "/targets", name: "targets", component: () => import("./pages/Targets.vue") },
     { path: "/accounts", name: "accounts", component: () => import("./pages/Accounts.vue") },
+    { path: "/profiles", name: "profiles", component: () => import("./pages/Profiles.vue") },
     { path: "/activity", name: "activity", component: () => import("./pages/Activity.vue") },
     { path: "/settings", name: "settings", component: () => import("./pages/Settings.vue") },
     { path: "/login", name: "login", component: () => import("./pages/Login.vue"), meta: { public: true } },

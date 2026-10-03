@@ -27,6 +27,10 @@ export interface JobRow {
   cached: number | null;
   comment_url: string | null;
   error: string | null;
+  profile_id?: string | null;
+  profile_name?: string | null;
+  mode?: string | null;
+  chunks?: number | null;
 }
 
 export interface PrRow {

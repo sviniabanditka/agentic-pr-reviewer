@@ -1,6 +1,7 @@
 import { claudeSettingsFor, githubFor, recordLimits } from "../accounts/service.js";
 import { parseDiffOutput } from "../github/parse_diff.js";
-import { prepareDiff, renderDiffForPrompt } from "../review/diff.js";
+import { chunkDiff, renderAll } from "../review/chunk.js";
+import { resolveProfile, type ProfileOptions } from "../review/modes.js";
 import { cacheKey } from "../review/cache_key.js";
 import { isInconclusive, review, type ReviewResult } from "../review/run.js";
 import { isBlockingCandidate } from "../verdict/verdict.js";
@@ -11,7 +12,7 @@ import type { JobRow } from "../store/types.js";
 
 export type Stage = "diff" | "review" | "confirm";
 
-type Job = JobRow & { user_id: string | null; account_id: string | null; item_id: string | null };
+type Job = JobRow & { user_id: string | null; account_id: string | null; item_id: string | null; profile_json: string | null };
 
 function setStage(rt: Runtime, job: Job, stage: Stage | undefined): void {
   if (stage === undefined) rt.stages.delete(job.id);
@@ -65,10 +66,14 @@ async function runJob(rt: Runtime, job: Job): Promise<void> {
       return;
     }
 
-    const diff = prepareDiff(files);
+    // Jobs from before profiles existed ran the triage mode with defaults.
+    const snapshot = job.profile_json ? (JSON.parse(job.profile_json) as { mode: string; options: ProfileOptions }) : { mode: "diff-triage", options: {} };
+    const profile = resolveProfile(snapshot.mode, snapshot.options);
+    const diff = chunkDiff(files, { budgetTokens: profile.budgetTokens, maxChunks: profile.maxChunks });
     const intent = pr.body.trim() !== "" ? pr.body : undefined;
-    const key = cacheKey(renderDiffForPrompt(diff), model, intent);
-    rt.log("info", `${files.length} file(s), ~${diff.tokenEstimate} tokens, ${diff.skippedFiles.length} skipped`, ctx);
+    const key = cacheKey(renderAll(diff), model, intent, JSON.stringify(snapshot));
+    rt.log("info", `${profile.mode.label}: ${files.length} file(s), ~${diff.tokenEstimate} tokens in ${diff.chunks.length} part(s), ${diff.skippedFiles.length} not reviewed`, ctx);
+    updateJob(rt, job.id, { chunks: diff.chunks.length });
 
     const hit = rt.db.query("SELECT result FROM cache WHERE key = ?").get(key) as { result: string } | null;
     let result: ReviewResult;
@@ -82,11 +87,17 @@ async function runJob(rt: Runtime, job: Job): Promise<void> {
           diff,
           context: { repo: job.repo, number: job.number, title: pr.title, headSha: pr.headSha, baseSha: pr.baseSha, branch: pr.headRef },
           ...(intent !== undefined ? { intent } : {}),
+          profile,
         },
         {
-          call: async (message) => {
-            const run = await rt.deps.callClaude(message, settings);
+          call: async (req, meta) => {
+            const started = Date.now();
+            const run = await rt.deps.callClaude(req, settings);
             if (run.limits !== undefined) recordLimits(rt, credential, run.limits);
+            rt.db.query(
+              `INSERT INTO runs (job_id, purpose, chunk, chunks, model, started_at, finished_at, outcome, tokens_in, tokens_out, cost_usd, error)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            ).run(job.id, meta.purpose, meta.chunk, meta.chunks, model, started, Date.now(), run.outcome, run.usage?.input ?? null, run.usage?.output ?? null, run.costUsd ?? null, run.errorMessage ?? null);
             return run;
           },
           log: (msg) => rt.log("info", msg, ctx),
@@ -100,7 +111,7 @@ async function runJob(rt: Runtime, job: Job): Promise<void> {
       conclusion: result.verdict.conclusion,
       verdict_title: result.verdict.title,
       findings: result.findings.length,
-      blocking: result.findings.filter(isBlockingCandidate).length,
+      blocking: result.findings.filter((f) => isBlockingCandidate(f, result.blocking)).length,
       confirmed: result.confirmedMarkers.length,
       runs: hit !== null ? 0 : result.usage.runs,
       tokens_in: hit !== null ? 0 : result.usage.tokensIn,

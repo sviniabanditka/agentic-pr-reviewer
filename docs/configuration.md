@@ -19,14 +19,16 @@ itself reads only a few environment variables.
 | Setting | Where | Default |
 |---|---|---|
 | Models offered in pickers | settings page (admin) | `sonnet`, `opus`, `haiku` |
-| Per account: Claude credential, default model, label | accounts page | none / first model / login |
-| Per target: query or repo, filters, role, automation, model, poll interval | targets page | manual, 60 s |
+| Per account: Claude credential, default model, default profile, label | accounts page | none / first model / your default / login |
+| Per target: query or repo, filters, role, automation, model and profile for auto-review, poll interval | targets page | manual, 60 s |
+| Profiles: mode, categories, blocking set, confirmation, budget, instructions | profiles page | Triage, Security audit, Intent check, Summary |
 
 ## Constants in code
 
 | What | Value | Where |
 |---|---|---|
-| Diff budget | 32,000 tokens; thresholds 1,500 / 1,000 | `src/review/diff.ts` |
+| Per-part diff budget / max parts | 32,000 tokens / 6 (per profile: 4,000–150,000 / 1–20) | `src/review/chunk.ts`, `src/review/modes.ts` |
+| Model catalog | aliases and full ids with context sizes | `src/providers/index.ts` |
 | Claude call timeout | 300 s | `src/review/claude.ts` |
 | Retries of an inconclusive run | 2, after 10 s and 30 s | `src/review/run.ts` |
 | Scheduler tick | 5 s; backoff on errors up to 15 min; waits for the GitHub reset on 403/429 | `src/scheduler/targets.ts` |
@@ -34,6 +36,6 @@ itself reads only a few environment variables.
 | Minimum poll interval | 30 s | `src/api/routes.ts` |
 | Session lifetime | 30 days absolute, 7 days idle | `src/auth/auth.ts` |
 | Login rate limit | 10 failures per IP or login per 15 min | `src/auth/auth.ts` |
-| Prompt version (cache key) | `v7` | `src/review/cache_key.ts` |
+| Prompt version (cache key) | `v8` | `src/review/cache_key.ts` |
 | Verdict cache / event retention | 24 h / 14 days | `src/store/db.ts` |
 | Concurrent reviews | 1 | `src/jobs/worker.ts` |

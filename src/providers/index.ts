@@ -1,0 +1,34 @@
+import { callClaude, probeLimits, type ClaudeLimits, type ClaudeRequest, type ClaudeSettings, type RunResult } from "../review/claude.js";
+
+/**
+ * A way to reach a model. Only `claude-cli` (Claude Code on the user's own subscription)
+ * exists today; an API-key provider plugs in here when it is wanted.
+ */
+export interface Provider {
+  id: string;
+  label: string;
+  complete(req: ClaudeRequest, settings: ClaudeSettings): Promise<RunResult>;
+  probe(settings: ClaudeSettings): Promise<ClaudeLimits | undefined>;
+}
+
+export interface ModelInfo {
+  id: string;
+  label: string;
+  /** Context window in tokens; bounds the per-run diff budget. */
+  context: number;
+}
+
+/** Known models; the settings page decides which ones the pickers offer. */
+export const MODEL_CATALOG: ModelInfo[] = [
+  { id: "sonnet", label: "Sonnet (latest)", context: 200_000 },
+  { id: "opus", label: "Opus (latest)", context: 200_000 },
+  { id: "haiku", label: "Haiku (latest)", context: 200_000 },
+  { id: "claude-fable-5-1", label: "Fable 5.1", context: 200_000 },
+  { id: "claude-opus-5-5", label: "Opus 5.5", context: 200_000 },
+  { id: "claude-sonnet-5-5", label: "Sonnet 5.5", context: 200_000 },
+  { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5", context: 200_000 },
+];
+
+export const PROVIDERS: Record<string, Provider> = {
+  "claude-cli": { id: "claude-cli", label: "Claude Code (subscription)", complete: callClaude, probe: probeLimits },
+};

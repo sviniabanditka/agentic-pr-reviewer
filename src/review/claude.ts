@@ -1,6 +1,6 @@
+import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
-import { SubmitFindingsSchema, type Finding } from "./finding.js";
-import { SYSTEM_PROMPT } from "./prompt.js";
+import type { Finding } from "./finding.js";
 
 export type ReviewOutcome = "findings" | "no_findings" | "didnt_look" | "error";
 
@@ -21,6 +21,8 @@ export interface RunResult {
   outcome: ReviewOutcome;
   /** Non-empty only when outcome === "findings". */
   findings: Finding[];
+  /** The validated structured output (findings modes: {findings}, summary: the summary). */
+  output?: unknown;
   latencyMs: number;
   usage?: TokenUsage;
   /** What the run would cost at API prices; informational on a subscription. */
@@ -36,7 +38,12 @@ export interface ClaudeSettings {
   configDir: string;
 }
 
-const SCHEMA = JSON.stringify(SubmitFindingsSchema);
+export interface ClaudeRequest {
+  system: string;
+  user: string;
+  schema: TSchema;
+}
+
 const TIMEOUT_MS = 300_000;
 
 /**
@@ -45,12 +52,23 @@ const TIMEOUT_MS = 300_000;
  * reach the network. The env is built from scratch for the same reason — the
  * GitHub tokens of the daemon never reach this process.
  */
-export async function callClaude(userMessage: string, settings: ClaudeSettings): Promise<RunResult> {
-  return runClaude(
-    ["--system-prompt", SYSTEM_PROMPT, "--json-schema", SCHEMA, "--model", settings.model],
-    userMessage,
+export async function callClaude(req: ClaudeRequest, settings: ClaudeSettings): Promise<RunResult> {
+  const result = await runClaude(
+    ["--system-prompt", req.system, "--json-schema", JSON.stringify(req.schema), "--model", settings.model],
+    req.user,
     settings,
   );
+  return result.outcome === "error" ? result : checkOutput(result, req.schema);
+}
+
+/** Model output is parsed, never trusted: anything off-schema reads as "didn't look". */
+export function checkOutput(result: RunResult, schema: TSchema): RunResult {
+  if (!Value.Check(schema, result.output)) {
+    return { ...result, outcome: "didnt_look", findings: [], errorMessage: "no structured output matching the schema" };
+  }
+  const findings = (result.output as { findings?: Finding[] }).findings;
+  if (findings === undefined) return { ...result, outcome: "no_findings", findings: [] };
+  return { ...result, outcome: findings.length > 0 ? "findings" : "no_findings", findings };
 }
 
 /** The cheapest call that makes Claude Code report the subscription's usage windows. */
@@ -117,7 +135,7 @@ export function parseClaudeStream(stdout: string): Omit<RunResult, "latencyMs"> 
   return { ...parseClaudeResult(result), ...meta };
 }
 
-/** The result event: model output is parsed, never trusted. */
+/** The result event; the structured output is checked against the schema by the caller. */
 function parseClaudeResult(data: Record<string, unknown>): Omit<RunResult, "latencyMs"> {
   const usage = readUsage(data.usage);
   const cost = typeof data.total_cost_usd === "number" ? { costUsd: data.total_cost_usd } : {};
@@ -126,11 +144,10 @@ function parseClaudeResult(data: Record<string, unknown>): Omit<RunResult, "late
   if (data.is_error === true) {
     return { outcome: "error", findings: [], errorMessage: String(data.result ?? "claude error"), ...meta };
   }
-  if (!Value.Check(SubmitFindingsSchema, data.structured_output)) {
-    return { outcome: "didnt_look", findings: [], errorMessage: "no structured output matching the schema", ...meta };
+  if (data.structured_output === undefined) {
+    return { outcome: "didnt_look", findings: [], errorMessage: "no structured output", ...meta };
   }
-  const { findings } = data.structured_output;
-  return { outcome: findings.length > 0 ? "findings" : "no_findings", findings, ...meta };
+  return { outcome: "no_findings", findings: [], output: data.structured_output, ...meta };
 }
 
 function readUsage(raw: unknown): TokenUsage | undefined {

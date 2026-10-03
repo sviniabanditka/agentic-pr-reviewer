@@ -68,7 +68,7 @@ function basename(path: string): string {
   return lastSlash === -1 ? path : path.slice(lastSlash + 1);
 }
 
-function isLockfile(path: string): boolean {
+export function isLockfile(path: string): boolean {
   const name = basename(path);
   if (LOCKFILE_DENY_LIST[name] === true) return true;
   return LOCKFILE_DENY_SUFFIXES.some((suffix) => name.endsWith(suffix));
@@ -79,7 +79,7 @@ type HunkLine =
   | { kind: "added"; newLine: number; text: string }
   | { kind: "removed"; text: string };
 
-interface Hunk {
+export interface Hunk {
   lines: HunkLine[];
 }
 
@@ -87,7 +87,7 @@ const HUNK_HEADER_PATTERN = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 
 // Parses a unified diff body (gh's per-file "patch") into hunks, tracking new-side
 // line numbers from each "@@" header rather than trusting counts in the diff body.
-function parseHunks(patch: string): Hunk[] {
+export function parseHunks(patch: string): Hunk[] {
   const hunks: Hunk[] = [];
   let current: Hunk | null = null;
   let newLineCursor = 0;
@@ -118,7 +118,7 @@ function parseHunks(patch: string): Hunk[] {
   return hunks;
 }
 
-function renderHunk(hunk: Hunk): string {
+export function renderHunk(hunk: Hunk): string {
   const newSideLines = hunk.lines.filter((line) => line.kind !== "removed");
   const oldSideLines = hunk.lines.filter((line) => line.kind !== "added");
   const hasRemovedLines = oldSideLines.some((line) => line.kind === "removed");
@@ -138,7 +138,7 @@ function renderHunk(hunk: Hunk): string {
   return blocks.join("\n");
 }
 
-function estimateTokens(text: string): number {
+export function estimateTokens(text: string): number {
   return Math.ceil(text.length / CHARS_PER_TOKEN);
 }
 

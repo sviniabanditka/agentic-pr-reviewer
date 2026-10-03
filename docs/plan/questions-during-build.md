@@ -34,3 +34,21 @@ what was decided for now, and what the owner should confirm.
 8. **v1 environment variables.** After the import the `GH_TOKEN_*`, `CLAUDE_TOKEN_*`
    and `PANEL_PASSWORD` keys in the cluster Secret are unused. I left them in place so a
    rollback to the v1 image keeps working; remove them once v2 is trusted.
+
+## Phase 2
+
+9. **No effort/thinking setting.** The plan listed an effort option; I could not
+   confirm a `claude -p` flag for it on the pinned CLI, so profiles do not offer one.
+   The model choice (haiku / sonnet / opus / explicit ids) is the speed–depth knob for
+   now. Confirm whether you want me to probe the CLI for a reasoning flag.
+10. **Confirmation "always" dropped.** Profiles offer `blocking` (second run only for
+    blocking candidates) and `never`. A second run when nothing is blocking has nothing
+    to confirm, so "always" would only double the cost.
+11. **`src/review` not renamed to `src/engine`.** The plan's module name; the rename
+    is churn without behaviour, so the engine stays in `src/review`.
+12. **Built-in profiles are per-user rows**, created on first use, editable and
+    deletable (except the default). There are no global read-only presets; say if
+    you want locked templates.
+13. **Summary mode posting.** A summary review posts its PR-description draft as the
+    usual marked comment. It does not edit the PR description itself; that would need
+    write access to the PR body and is easy to add as an output in phase 3.

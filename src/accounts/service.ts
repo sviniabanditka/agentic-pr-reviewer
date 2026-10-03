@@ -155,6 +155,7 @@ export function publicAccount(rt: Runtime, a: AccountRow) {
     scopes: a.scopes,
     credentialId: a.credential_id,
     model: a.model,
+    profileId: a.profile_id,
     status: a.status,
     statusDetail: a.status_detail,
     checkedAt: a.checked_at,

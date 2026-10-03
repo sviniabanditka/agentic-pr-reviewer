@@ -77,7 +77,7 @@ const inputValue = (e: Event) => (e.target as HTMLInputElement).value;
             <span class="ml-auto flex items-center gap-2 text-tertiary">github api <TBar :pct="a.github?.core ? 100 - (a.github.core.remaining / a.github.core.limit) * 100 : null" :width="10" /></span>
           </div>
           <div v-if="a.statusDetail" class="text-danger">! {{ a.statusDetail }}</div>
-          <div class="grid gap-3 md:grid-cols-3">
+          <div class="grid gap-3 md:grid-cols-4">
             <label><span class="label">label</span><input :value="a.label" class="field" @change="patch(a, { label: inputValue($event) })"></label>
             <label><span class="label">claude credential for reviews</span>
               <select :value="a.credentialId ?? ''" class="field" @change="patch(a, { credentialId: inputValue($event) || null })">
@@ -85,6 +85,10 @@ const inputValue = (e: Event) => (e.target as HTMLInputElement).value;
             <label><span class="label">default model</span>
               <select :value="a.model ?? ''" class="field" @change="patch(a, { model: inputValue($event) || null })">
                 <option value="">first in the list ({{ store.models[0] }})</option><option v-for="m in store.models" :key="m" :value="m">{{ m }}</option></select></label>
+            <label><span class="label">default profile</span>
+              <select :value="a.profileId ?? ''" class="field" @change="patch(a, { profileId: inputValue($event) || null })">
+                <option value="">your default ({{ store.profiles.find((p) => p.isDefault)?.name.toLowerCase() }})</option>
+                <option v-for="p in store.profiles" :key="p.id" :value="p.id">{{ p.name.toLowerCase() }}</option></select></label>
           </div>
           <div class="flex flex-wrap items-center gap-1">
             <TBtn :busy="busy[`check-${a.id}`]" @click="checkAccount(a.id)">check token</TBtn>

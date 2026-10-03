@@ -13,9 +13,9 @@ export const GH_TOKEN_BOB = "ghtest_bob_token_value_0000000000000";
 export const CLAUDE_TOKEN = "claudetest_token_value_0000000000000";
 
 export function scriptedClaude(findings: Finding[] = []) {
-  const calls: string[] = [];
-  const callClaude: Deps["callClaude"] = async (message) => {
-    calls.push(message);
+  const calls: { system: string; user: string }[] = [];
+  const callClaude: Deps["callClaude"] = async (req) => {
+    calls.push({ system: req.system, user: req.user });
     const result: RunResult = {
       outcome: findings.length ? "findings" : "no_findings",
       findings,
