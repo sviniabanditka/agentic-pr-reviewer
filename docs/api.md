@@ -1,8 +1,10 @@
 # HTTP API v1
 
-Base path `/api/v1`, JSON in and out. Everything except `GET/POST /setup` and
-`POST /auth/login` needs the session cookie (`apr_session`). Every non-GET request
-must send `x-requested-with: fetch`; a foreign `Origin` gets `403`. Errors are
+Base path `/api/v1`, JSON in and out. Everything except `GET/POST /setup`,
+`POST /auth/login` and `/invites/:token` needs the session cookie (`apr_session`) or a
+personal API token (`Authorization: Bearer apr_…`). With the cookie, every non-GET
+request must send `x-requested-with: fetch` and a foreign `Origin` gets `403`; bearer
+requests skip that check (browsers never attach them on their own). Errors are
 `{ "error": "sentence" }` with 400 (bad input), 401, 403, 404 or 409 (refused).
 
 ## Auth
@@ -11,9 +13,31 @@ must send `x-requested-with: fetch`; a foreign `Origin` gets `403`. Errors are
 |---|---|---|---|
 | GET | `/setup` | — | `{needsSetup}` |
 | POST | `/setup` | `{login, password}` | Only while no user exists; creates the admin, signs in, runs the v1 import |
-| POST | `/auth/login` | `{login, password}` | 10 failures per IP or login in 15 min → 429 |
+| POST | `/auth/login` | `{login, password, code?}` | 10 failures per IP or login in 15 min → 429. With two-factor on, a missing or wrong `code` → 401 `{totp: true}` |
 | POST | `/auth/logout` | — | |
-| GET | `/auth/me` | — | `{user: {id, login, role}}` |
+| GET | `/auth/me` | — | `{user: {id, login, role}, totp}` |
+| POST | `/auth/password` | `{current, next}` | signs out the user's other sessions |
+| POST | `/auth/totp/setup` | — | `{secret, uri}`; stored, not enforced yet |
+| POST | `/auth/totp/enable` | `{code}` | turns two-factor on |
+| POST | `/auth/totp/disable` | `{password, code}` | |
+| GET | `/invites/:token` | — | `{role}` or 404 when used, expired or revoked |
+| POST | `/invites/:token` | `{login, password}` | creates the user, spends the link, signs in |
+
+## Personal API tokens
+
+`GET /tokens` · `POST /tokens` `{label}` → `{id, token}` (shown once; cookie only — a
+token cannot mint tokens) · `DELETE /tokens/:id`. A token acts as its user everywhere
+except `/admin`.
+
+## Admin (`/admin`, role admin, cookie only)
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/admin/users` | `{users, queue}`: per user counts of accounts, credentials, targets, queued, reviews 24 h / 7 d, failures, tokens and model time 7 d, last seen. No repositories, titles or findings |
+| PATCH | `/admin/users/:id` | `{disabled?, role?, resetTotp?}`; disabling ends sessions, drops queued reviews, turns targets off; not on yourself |
+| GET | `/admin/invites` | last 100 with state |
+| POST | `/admin/invites` | `{role, note?}` → `{id, url, expiresAt}`; the link is valid 7 days and shown once |
+| DELETE | `/admin/invites/:id` | revokes an unused link |
 
 ## Overview
 

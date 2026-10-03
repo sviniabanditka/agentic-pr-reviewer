@@ -8,7 +8,7 @@ import ReviewDrawer from "./components/ReviewDrawer.vue";
 
 const route = useRoute();
 const router = useRouter();
-const nav = [
+const baseNav = [
   { to: "/", label: "overview", name: "overview" },
   { to: "/inbox", label: "inbox", name: "inbox" },
   { to: "/targets", label: "targets", name: "targets" },
@@ -17,6 +17,7 @@ const nav = [
   { to: "/activity", label: "activity", name: "activity" },
   { to: "/settings", label: "settings", name: "settings" },
 ];
+const nav = computed(() => (store.user?.role === "admin" ? [...baseNav, { to: "/admin", label: "admin", name: "admin" }] : baseNav));
 const shell = computed(() => !route.meta.public);
 const active = computed(() => [...store.reviews.values()].filter((r) => r.status === "running" || r.status === "queued").length);
 const inboxCount = computed(() => [...store.items.values()].filter((i) => i.state === "open" && (!i.lastReview || (i.lastReview.status === "done" && i.lastReview.head_sha !== i.headSha))).length);

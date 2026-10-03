@@ -58,4 +58,6 @@ export interface UserRow {
   role: "admin" | "member";
   disabled: number;
   created_at: number;
+  totp_secret_id: string | null;
+  totp_enabled: number;
 }

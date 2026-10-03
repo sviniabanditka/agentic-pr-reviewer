@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { memoryDb } from "../../src/store/db.js";
-import { fingerprint, getSecret, putSecret, SecretBox } from "../../src/store/secrets.js";
+import { fingerprint, getSecret, putSecret, rotateSecrets, SecretBox } from "../../src/store/secrets.js";
 
 const key = Buffer.alloc(32, 1).toString("base64");
 
@@ -35,5 +35,16 @@ describe("secrets", () => {
 
   it("fingerprint shows only the tail", () => {
     expect(fingerprint("ghp_abcdef1234")).toBe("…1234");
+  });
+
+  it("rotation re-seals every secret under the new key; the old key no longer opens them", () => {
+    const db = memoryDb();
+    const old = new SecretBox(key);
+    const id = putSecret(db, old, "u1", "github-token", "ghp_rotate_me");
+    const fresh = new SecretBox(Buffer.alloc(32, 2).toString("base64"));
+    expect(rotateSecrets(db, fresh, old)).toBe(1);
+    expect(getSecret(db, fresh, id)).toBe("ghp_rotate_me");
+    expect(() => getSecret(db, old, id)).toThrow();
+    expect(rotateSecrets(db, fresh, old)).toBe(0);
   });
 });

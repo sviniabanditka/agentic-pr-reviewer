@@ -77,3 +77,22 @@ what was decided for now, and what the owner should confirm.
     are cheap to add once you know what you would change; tell me what.
 22. **Activity opens on the audit tab** ("audit log first" in the roadmap); the live log
     is one click away.
+
+## Phase 4
+
+23. **No QR code for two-factor.** The settings page shows the key (and an otpauth link)
+    to type into the authenticator; a QR needs a library or a hand-rolled encoder. Say
+    if you want it.
+24. **No admin password reset.** A colleague who forgets their password gets a new
+    invite after the admin disables the old user, or I add a reset-link flow. Which?
+25. **One queue for everyone.** Reviews run one at a time across all users (priority,
+    then age). Fine for a few colleagues; per-user fairness or parallel workers per
+    credential when it is not.
+26. **anthropic-api cost column stays 0.** The Messages API does not return a price;
+    tokens are recorded. A price table per model would need maintaining.
+27. **`apr` picks the first account with a credential** of the token's user. Add
+    `--account` if you use several.
+28. **Not built in this run, need you first:** the repo-aware runner (k8s Job sandbox,
+    NetworkPolicy; needs the controls in 07 decided), the GitHub App (you create the App
+    on GitHub: name, permissions, webhook URL, private key) and the GitLab adapter (no
+    GitLab account to test against). Each is independent; tell me which to start.

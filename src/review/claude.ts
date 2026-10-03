@@ -32,6 +32,9 @@ export interface RunResult {
 }
 
 export interface ClaudeSettings {
+  /** "claude-cli" (default) or "anthropic-api"; picks the transport. */
+  provider?: string;
+  /** The OAuth token from `claude setup-token`, or the API key for anthropic-api. */
   oauthToken: string;
   model: string;
   /** Per-account state dir, so two accounts never share Claude Code's local state. */

@@ -1,8 +1,9 @@
 import { callClaude, probeLimits, type ClaudeLimits, type ClaudeRequest, type ClaudeSettings, type RunResult } from "../review/claude.js";
+import { callAnthropic, probeAnthropic } from "./anthropic.js";
 
 /**
- * A way to reach a model. Only `claude-cli` (Claude Code on the user's own subscription)
- * exists today; an API-key provider plugs in here when it is wanted.
+ * A way to reach a model: Claude Code on the user's subscription (`claude-cli`) or the
+ * Messages API with an API key (`anthropic-api`). A credential names its provider.
  */
 export interface Provider {
   id: string;
@@ -31,4 +32,11 @@ export const MODEL_CATALOG: ModelInfo[] = [
 
 export const PROVIDERS: Record<string, Provider> = {
   "claude-cli": { id: "claude-cli", label: "Claude Code (subscription)", complete: callClaude, probe: probeLimits },
+  "anthropic-api": { id: "anthropic-api", label: "Anthropic API (API key)", complete: (req, s) => callAnthropic(req, s), probe: (s) => probeAnthropic(s) },
 };
+
+export const PROVIDER_IDS = Object.keys(PROVIDERS);
+
+const providerOf = (s: ClaudeSettings): Provider => PROVIDERS[s.provider ?? "claude-cli"] ?? PROVIDERS["claude-cli"]!;
+export const complete = (req: ClaudeRequest, s: ClaudeSettings): Promise<RunResult> => providerOf(s).complete(req, s);
+export const probe = (s: ClaudeSettings): Promise<ClaudeLimits | undefined> => providerOf(s).probe(s);

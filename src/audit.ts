@@ -11,7 +11,14 @@ export type AuditAction =
   | "credential_removed"
   | "target_auto_post_enabled"
   | "channel_added"
-  | "channel_removed";
+  | "channel_removed"
+  | "user_invited"
+  | "user_disabled"
+  | "user_enabled"
+  | "role_changed"
+  | "totp_reset"
+  | "api_token_created"
+  | "api_token_revoked";
 
 /** One row per GitHub write and per change to stored credentials; never contains a token. */
 export function audit(rt: Runtime, userId: string, action: AuditAction, subject: string, details: Record<string, unknown> = {}, accountId?: string): void {

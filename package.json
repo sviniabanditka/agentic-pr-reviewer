@@ -10,7 +10,9 @@
     "check": "tsc --noEmit && vue-tsc --noEmit -p web/tsconfig.json",
     "deploy": "./scripts/deploy.sh",
     "dev:web": "vite --config web/vite.config.ts",
-    "build:web": "vite build --config web/vite.config.ts"
+    "build:web": "vite build --config web/vite.config.ts",
+    "apr": "bun src/cli/apr.ts",
+    "build:cli": "bun build --compile src/cli/apr.ts --outfile dist/apr"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",

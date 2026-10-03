@@ -46,6 +46,31 @@ Since v2 the only required key is `MASTER_KEY`; GitHub and Claude tokens are add
 the web app. Keep a copy of the master key (the deployed one is in
 `~/.config/pr-reviewer/master-key`).
 
+**Rotating the master key:** generate a new one, set it with
+`set-secret.sh MASTER_KEY`, set the previous one as `MASTER_KEY_OLD`, restart; the log
+says how many secrets were re-encrypted. Then remove `MASTER_KEY_OLD` and restart again.
+
+## Colleagues
+
+An admin creates an invite link on the admin page (7 days, one use) and sends it
+privately. The colleague picks a login and password, then adds their own GitHub
+accounts and Claude subscription; nothing is shared between users. The admin page shows
+load per user (reviews, tokens, model time, queue), never their repositories or
+findings. Disabling a user signs them out, drops their queued reviews and turns their
+targets off. Before inviting colleagues on a corporate Claude plan, see the policy note
+in `docs/plan/09-open-questions.md`.
+
+## Command-line client
+
+`bun run build:cli` builds `dist/apr`. With a token from settings → api tokens:
+
+```bash
+export APR_URL=https://review.example.com APR_TOKEN=apr_…
+apr review main          # reviews git diff main...HEAD as a pasted patch
+```
+
+Exit code 3 means blocking findings, so it can gate a pre-push hook.
+
 ## Migrating from v1
 
 On the first start with a v2 image, if `config.json` is mounted and `GH_TOKEN_<NAME>` /

@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { Bus } from "./events/bus.js";
-import { callClaude, probeLimits, type ClaudeLimits, type ClaudeRequest, type ClaudeSettings, type RunResult } from "./review/claude.js";
+import type { ClaudeLimits, ClaudeRequest, ClaudeSettings, RunResult } from "./review/claude.js";
+import { complete, probe } from "./providers/index.js";
 import { getSetting } from "./store/repos.js";
 import type { SecretBox } from "./store/secrets.js";
 import type { RateWindow } from "./github/client.js";
@@ -49,7 +50,7 @@ export class Runtime {
     this.box = opts.box;
     this.dataDir = opts.dataDir;
     this.quiet = opts.quiet ?? false;
-    this.deps = { githubBase: undefined, callClaude, probeLimits, ...opts.deps };
+    this.deps = { githubBase: undefined, callClaude: complete, probeLimits: probe, ...opts.deps };
   }
 
   /** Models offered in pickers; instance-wide setting. */

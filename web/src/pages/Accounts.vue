@@ -10,7 +10,7 @@ import TPrompt from "../components/TPrompt.vue";
 import { toast } from "../components/toast";
 
 const newAccount = reactive({ token: "", label: "", busy: false, open: false });
-const newCred = reactive({ token: "", label: "", busy: false, open: false });
+const newCred = reactive({ provider: "claude-cli", token: "", label: "", busy: false, open: false });
 const replacing = ref<string | null>(null);
 const replaceToken = ref("");
 const busy = reactive<Record<string, boolean>>({});
@@ -62,8 +62,8 @@ async function pollDevice() {
 }
 async function addCredential() {
   newCred.busy = true;
-  await run("add-cred", () => api.post("/credentials", { provider: "claude-cli", token: newCred.token, label: newCred.label || undefined }), "credential added");
-  Object.assign(newCred, { token: "", label: "", open: false, busy: false });
+  await run("add-cred", () => api.post("/credentials", { provider: newCred.provider, token: newCred.token, label: newCred.label || undefined }), "credential added");
+  Object.assign(newCred, { provider: "claude-cli", token: "", label: "", open: false, busy: false });
 }
 const patch = (a: Account, body: Record<string, unknown>) => run(a.id, () => api.patch(`/accounts/${a.id}`, body), "saved");
 const checkAccount = (id: string) => run(`check-${id}`, () => api.post(`/accounts/${id}/check`), "checked");
@@ -148,9 +148,12 @@ const inputValue = (e: Event) => (e.target as HTMLInputElement).value;
         <TBtn class="ml-auto" tone="primary" @click="newCred.open = !newCred.open">add credential</TBtn>
       </div>
       <form v-if="newCred.open" class="grid gap-3 rounded-lg border border-accent/40 bg-surface px-5 py-4" @submit.prevent="addCredential">
-        <p class="m-0 text-tertiary">// run <span class="text-secondary">claude setup-token</span> with the subscription that should pay for reviews and paste its output.
+        <p v-if="newCred.provider === 'claude-cli'" class="m-0 text-tertiary">// run <span class="text-secondary">claude setup-token</span> with the subscription that should pay for reviews and paste its output.
           it is validated with a tiny haiku request, stored encrypted, and only ever handed to the claude process.</p>
-        <div class="grid gap-3 md:grid-cols-[2fr_1fr_auto] md:items-end">
+        <p v-else class="m-0 text-tertiary">// an anthropic api key (console.anthropic.com → api keys). reviews are billed per token to that account; the cost column shows nothing because the api does not report prices.
+          checked by listing models, stored encrypted, sent only to api.anthropic.com.</p>
+        <div class="grid gap-3 md:grid-cols-[1fr_2fr_1fr_auto] md:items-end">
+          <label><span class="label">kind</span><select v-model="newCred.provider" class="field"><option value="claude-cli">claude subscription</option><option value="anthropic-api">anthropic api key</option></select></label>
           <label><span class="label">token</span><input v-model="newCred.token" class="field" type="password" autocomplete="off" required></label>
           <label><span class="label">label</span><input v-model="newCred.label" class="field" placeholder="personal max"></label>
           <TBtn type="submit" tone="primary" :busy="newCred.busy">validate &amp; save</TBtn>

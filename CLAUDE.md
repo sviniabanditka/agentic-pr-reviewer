@@ -13,6 +13,7 @@ one comment per account.
 bun test
 bun run check        # tsc + vue-tsc
 bun run build:web    # before running the server locally
+bun run build:cli    # dist/apr, the command-line client
 ```
 
 ## Deploy
@@ -27,9 +28,14 @@ Secrets only through `./scripts/set-secret.sh KEY [--restart]`; never put tokens
 
 ## Rules that are easy to break
 
-- Nothing reaches GitHub without an explicit Post press: the worker never comments,
-  `publishJob` (`POST /api/v1/reviews/:id/publish`) is the only writer. The scheduler
-  enqueues only for targets the user set to `auto-review`.
+- Nothing reaches GitHub without an explicit Post press, except for targets the user
+  set to `auto-post` (confirmed by typing the account login, audited).
+  `publishJob` is the only writer; every write goes to the `audit` table. The scheduler
+  enqueues only for targets set to `auto-review` or `auto-post`.
+- Admins see load (counts, tokens, time), never another user's repositories, titles,
+  findings or tokens. Admin routes refuse API tokens.
+- API tokens (`apr_…`, CLI) skip CSRF because browsers never send them on their own;
+  they cannot create more tokens.
 - Every owner-scoped query filters by `user_id`; API tests check cross-user access.
 - `claude` runs with `--tools ""` and a from-scratch env; GitHub tokens must never
   reach it.

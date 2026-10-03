@@ -82,7 +82,10 @@ src/
   main.ts          boot: DB + migrations, admin bootstrap, v1 import, server, scheduler, worker
   runtime.ts       shared state and injectable deps (GitHub base URL, Claude calls)
   api/             Hono app (auth, CSRF, headers, SSE, SPA), API v1 routes
-  auth/            users (argon2id), sessions, login rate limit
+  auth/            users (argon2id), sessions, invites, TOTP, API tokens, login rate limit
+  cli/             apr: review a local diff through the API (bun run build:cli)
+  providers/       claude-cli (subscription) and anthropic-api (API key) transports
+  outputs/         notification channels (Slack, Telegram, webhook)
   accounts/        GitHub accounts and Claude credentials: validate, store encrypted, check
   scheduler/       target polling → items, filters, roles, auto-review, limits probe
   jobs/            queue, worker (review pipeline), publish (the only GitHub write)

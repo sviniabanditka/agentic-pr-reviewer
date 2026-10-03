@@ -13,12 +13,18 @@ itself reads only a few environment variables.
 | `PANEL_PASSWORD` / `PANEL_USER` | — / `admin` | Only on an instance with no users: creates the first admin non-interactively (how v1 deployments migrate). Otherwise the first visit shows a setup page. |
 | `CONFIG_PATH`, `GH_TOKEN_<NAME>`, `CLAUDE_TOKEN_<NAME>` | — | v1 only: read once by the importer on first start, then ignored (see [operations.md](operations.md#migrating-from-v1)) |
 | `GITHUB_API_URL` | `https://api.github.com` | For tests or GitHub Enterprise |
+| `GITHUB_WEB_URL` | `https://github.com` | Device-login endpoints (GitHub Enterprise) |
+| `ANTHROPIC_API_URL` | `https://api.anthropic.com` | For `anthropic-api` credentials |
+| `MASTER_KEY_OLD` | — | Key rotation: set the new key as `MASTER_KEY` and the old one here, restart once (every secret is re-encrypted), then remove it |
 
 ## Settings (stored in the database)
 
 | Setting | Where | Default |
 |---|---|---|
 | Models offered in pickers | settings page (admin) | `sonnet`, `opus`, `haiku` |
+| GitHub OAuth app client id (device login) | settings page (admin) | none: accounts are added by token |
+| Retention of findings and pasted patches | settings page (per user) | 90 days |
+| Notification channels, API tokens, password, two-factor | settings page (per user) | none |
 | Per account: Claude credential, default model, default profile, label | accounts page | none / first model / your default / login |
 | Per target: query or repo, filters, role, automation, model and profile for auto-review, poll interval | targets page | manual, 60 s |
 | Profiles: mode, categories, blocking set, confirmation, budget, instructions | profiles page | Triage, Security audit, Intent check, Summary |

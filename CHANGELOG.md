@@ -4,6 +4,18 @@ Newest first.
 
 ---
 
+# 2026-10-03 — v2 phase 4 (part 1): colleagues, CLI, API keys
+
+- Colleagues: admin invite links (7 days, one use), admin page with per-user load
+  (no repositories, titles or findings), disable / role / reset two-factor.
+- Two-factor sign-in (TOTP), password change (ends other sessions).
+- Personal API tokens and `apr`, a command-line client that reviews a local diff.
+- `anthropic-api` credentials: reviews over the Messages API with an API key.
+- Master key rotation via `MASTER_KEY_OLD`.
+- Migration 0006.
+
+---
+
 # 2026-10-03 — v2 phase 3: outputs, incremental reviews, compare and patch
 
 - Post a review as the marked comment or as a GitHub review with inline comments

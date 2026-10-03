@@ -23,6 +23,7 @@ import { MODEL_CATALOG } from "../providers/index.js";
 import { cancelJob, enqueueReview } from "../jobs/queue.js";
 import { publishJob } from "../jobs/publish.js";
 import { startDeviceLogin, pollDeviceLogin } from "../accounts/device.js";
+import { createApiToken } from "../auth/auth.js";
 import { audit } from "../audit.js";
 import { renderMarkdown } from "../github/comment.js";
 import { addChannel, listChannels, notify, NOTIFY_EVENTS, publicChannel, type NotifyEvent } from "../outputs/notify.js";
@@ -787,6 +788,26 @@ export function apiRoutes(rt: Runtime): Hono<Env> {
     const rows = rt.db.query("SELECT id, account_id, action, subject, details_json, created_at FROM audit WHERE user_id = ? ORDER BY id DESC LIMIT ?").all(c.var.user.id, limit) as
       { id: number; account_id: string | null; action: string; subject: string; details_json: string; created_at: number }[];
     return c.json({ audit: rows.map(({ details_json, ...r }) => ({ ...r, details: JSON.parse(details_json) })) });
+  });
+
+  // ── personal API tokens (CLI) ────────────────────────────────────
+  api.get("/tokens", (c) =>
+    c.json({ tokens: rt.db.query("SELECT id, label, hint, created_at, last_used_at FROM api_tokens WHERE user_id = ? ORDER BY created_at DESC").all(c.var.user.id) }),
+  );
+  api.post("/tokens", async (c) => {
+    // A token cannot mint more tokens: only a signed-in browser can.
+    if (c.req.header("authorization")) return c.json({ error: "create tokens from the panel" }, 403);
+    const b = await body(c, Type.Object({ label: Type.String({ minLength: 1, maxLength: 60 }) }));
+    if (b instanceof Response) return b;
+    const t = createApiToken(rt.db, c.var.user.id, b.label);
+    audit(rt, c.var.user.id, "api_token_created", b.label);
+    return c.json({ id: t.id, token: t.token }, 201);
+  });
+  api.delete("/tokens/:id", (c) => {
+    const r = rt.db.query("DELETE FROM api_tokens WHERE id = ? AND user_id = ? RETURNING label").get(c.req.param("id"), c.var.user.id) as { label: string } | null;
+    if (r === null) return c.json({ error: "not found" }, 404);
+    audit(rt, c.var.user.id, "api_token_revoked", r.label);
+    return c.json({ ok: true });
   });
 
   // ── notification channels ────────────────────────────────────────

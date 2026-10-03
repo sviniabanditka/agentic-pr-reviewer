@@ -61,3 +61,19 @@ export function deleteSecret(db: Database, id: string): void {
 export function fingerprint(token: string): string {
   return `…${token.slice(-4)}`;
 }
+
+/**
+ * Key rotation: re-seals every secret still under `old` with `box`, in one transaction.
+ * Run on start when MASTER_KEY_OLD is set; returns how many were moved.
+ */
+export function rotateSecrets(db: Database, box: SecretBox, old: SecretBox): number {
+  const rows = db.query("SELECT * FROM secrets WHERE key_id = ?").all(old.keyId) as { id: string; key_id: string; iv: string; ciphertext: string; aad: string }[];
+  db.transaction(() => {
+    for (const row of rows) {
+      const plain = old.open({ keyId: row.key_id, iv: row.iv, ciphertext: row.ciphertext }, `${row.aad}:${row.id}`);
+      const sealed = box.seal(plain, `${row.aad}:${row.id}`);
+      db.query("UPDATE secrets SET key_id = ?, iv = ?, ciphertext = ? WHERE id = ?").run(sealed.keyId, sealed.iv, sealed.ciphertext, row.id);
+    }
+  })();
+  return rows.length;
+}

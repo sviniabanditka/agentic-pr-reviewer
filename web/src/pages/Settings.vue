@@ -6,6 +6,9 @@ import type { Channel } from "../types";
 import TBtn from "../components/TBtn.vue";
 import TPrompt from "../components/TPrompt.vue";
 import { toast } from "../components/toast";
+import { stamp } from "../format";
+
+const origin = location.origin;
 
 interface Settings { models: string[]; retentionDays: number; githubOauthClientId: string }
 const admin = store.user?.role === "admin";
@@ -69,6 +72,49 @@ function toggle(list: string[], v: string) {
   if (i >= 0) list.splice(i, 1);
   else list.push(v);
 }
+const pw = reactive({ current: "", next: "" });
+const savePassword = () =>
+  channelAct("pw", async () => {
+    await api.post("/auth/password", { current: pw.current, next: pw.next });
+    Object.assign(pw, { current: "", next: "" });
+  }, "password changed; other browsers are signed out");
+const totpOn = ref(false);
+const totpSetup = ref<{ secret: string; uri: string } | null>(null);
+const totpCodeIn = ref("");
+const totpOff = reactive({ password: "", code: "", open: false });
+onMounted(async () => {
+  totpOn.value = (await api.get<{ totp: boolean }>("/auth/me")).totp;
+});
+const startTotp = () => channelAct("totp", async () => (totpSetup.value = await api.post("/auth/totp/setup")), "add the key to your authenticator app");
+const enableTotp = () =>
+  channelAct("totp", async () => {
+    await api.post("/auth/totp/enable", { code: totpCodeIn.value });
+    totpOn.value = true;
+    totpSetup.value = null;
+    totpCodeIn.value = "";
+  }, "two-factor sign-in is on");
+const disableTotp = () =>
+  channelAct("totp", async () => {
+    await api.post("/auth/totp/disable", { password: totpOff.password, code: totpOff.code });
+    totpOn.value = false;
+    Object.assign(totpOff, { password: "", code: "", open: false });
+  }, "two-factor sign-in is off");
+interface ApiToken { id: string; label: string; hint: string; created_at: number; last_used_at: number | null }
+const tokens = ref<ApiToken[]>([]);
+const tokenLabel = ref("");
+const shownToken = ref<string | null>(null);
+const loadTokens = async () => (tokens.value = (await api.get<{ tokens: ApiToken[] }>("/tokens")).tokens);
+onMounted(loadTokens);
+const createToken = () =>
+  channelAct("tok", async () => {
+    shownToken.value = (await api.post<{ token: string }>("/tokens", { label: tokenLabel.value })).token;
+    tokenLabel.value = "";
+    await loadTokens();
+  }, "token created");
+const revokeToken = (t: ApiToken) => channelAct(t.id, async () => {
+  await api.del(`/tokens/${t.id}`);
+  await loadTokens();
+}, "token revoked");
 const secretLabel = { webhook: "webhook url (https)", slack: "slack incoming webhook url", telegram: "bot token" };
 </script>
 
@@ -78,6 +124,61 @@ const secretLabel = { webhook: "webhook url (https)", slack: "slack incoming web
       <TPrompt :level="1">settings</TPrompt>
       <div class="rounded-lg border border-subtle bg-surface px-5 py-4 text-secondary">
         signed in as <span class="text-bright">{{ store.user?.login }}</span> <span class="text-tertiary">({{ store.user?.role }})</span>
+      </div>
+    </section>
+
+    <section class="grid gap-3">
+      <TPrompt>sign-in</TPrompt>
+      <div class="grid gap-4 rounded-lg border border-subtle bg-surface px-5 py-4">
+        <form class="flex flex-wrap items-end gap-3" @submit.prevent="savePassword">
+          <label><span class="label">current password</span><input v-model="pw.current" class="field" type="password" autocomplete="current-password" required></label>
+          <label><span class="label">new password</span><input v-model="pw.next" class="field" type="password" autocomplete="new-password" minlength="10" required></label>
+          <TBtn type="submit" :busy="saving.pw">change password</TBtn>
+        </form>
+        <div class="grid gap-2 border-t border-subtle pt-3">
+          <div class="flex flex-wrap items-center gap-3">
+            <span class="text-secondary">two-factor sign-in</span>
+            <span :class="totpOn ? 'text-ok' : 'text-faint'">{{ totpOn ? "on" : "off" }}</span>
+            <TBtn v-if="!totpOn && !totpSetup" :busy="saving.totp" @click="startTotp">turn on</TBtn>
+            <TBtn v-if="totpOn && !totpOff.open" tone="danger" @click="totpOff.open = true">turn off</TBtn>
+          </div>
+          <form v-if="totpSetup" class="grid gap-2" @submit.prevent="enableTotp">
+            <p class="m-0 text-tertiary">// add this key to an authenticator app (1password, google authenticator, aegis…) as a time-based code, then type the 6-digit code it shows.</p>
+            <code class="justify-self-start break-all rounded-sm bg-base px-2 py-1 tracking-widest text-bright">{{ totpSetup.secret.match(/.{1,4}/g)?.join(" ") }}</code>
+            <a :href="totpSetup.uri" class="justify-self-start text-accent hover:underline">open in an authenticator app on this device</a>
+            <div class="flex flex-wrap items-end gap-2">
+              <label><span class="label">code</span><input v-model="totpCodeIn" class="field w-32 tracking-widest" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required></label>
+              <TBtn type="submit" tone="primary" :busy="saving.totp">confirm</TBtn>
+              <TBtn @click="totpSetup = null">cancel</TBtn>
+            </div>
+          </form>
+          <form v-if="totpOff.open" class="flex flex-wrap items-end gap-2" @submit.prevent="disableTotp">
+            <label><span class="label">password</span><input v-model="totpOff.password" class="field" type="password" autocomplete="current-password" required></label>
+            <label><span class="label">code</span><input v-model="totpOff.code" class="field w-32 tracking-widest" inputmode="numeric" maxlength="6" required></label>
+            <TBtn type="submit" tone="danger" :busy="saving.totp">turn off</TBtn>
+            <TBtn @click="totpOff.open = false">cancel</TBtn>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid gap-3">
+      <TPrompt>api tokens</TPrompt>
+      <div class="grid gap-3 rounded-lg border border-subtle bg-surface px-5 py-4">
+        <p class="m-0 text-tertiary">// for the <span class="text-secondary">apr</span> command line: <span class="text-secondary">APR_URL={{ origin }} APR_TOKEN=… apr review main</span> reviews your local branch. a token acts as you, except for admin pages and making more tokens.</p>
+        <div v-for="t in tokens" :key="t.id" class="flex flex-wrap items-center gap-3 text-[13px]">
+          <span class="text-bright">{{ t.label }}</span><span class="text-faint">{{ t.hint }}</span>
+          <span class="text-tertiary">{{ t.last_used_at ? `used ${stamp(t.last_used_at)}` : "never used" }}</span>
+          <TBtn class="ml-auto" tone="danger" confirm="revoke?" @click="revokeToken(t)">revoke</TBtn>
+        </div>
+        <form class="flex flex-wrap items-end gap-2" @submit.prevent="createToken">
+          <label><span class="label">name</span><input v-model="tokenLabel" class="field" placeholder="laptop" maxlength="60" required></label>
+          <TBtn type="submit" :busy="saving.tok">create token</TBtn>
+        </form>
+        <div v-if="shownToken" class="grid gap-1">
+          <span class="text-warn">// shown once — store it now.</span>
+          <code class="justify-self-start break-all rounded-sm bg-base px-2 py-1 text-bright">{{ shownToken }}</code>
+        </div>
       </div>
     </section>
 

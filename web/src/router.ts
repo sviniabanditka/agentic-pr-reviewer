@@ -13,6 +13,8 @@ export const router = createRouter({
     { path: "/profiles", name: "profiles", component: () => import("./pages/Profiles.vue") },
     { path: "/activity", name: "activity", component: () => import("./pages/Activity.vue") },
     { path: "/settings", name: "settings", component: () => import("./pages/Settings.vue") },
+    { path: "/admin", name: "admin", component: () => import("./pages/Admin.vue") },
+    { path: "/invite/:token", name: "invite", component: () => import("./pages/Login.vue"), meta: { public: true, invite: true } },
     { path: "/login", name: "login", component: () => import("./pages/Login.vue"), meta: { public: true } },
     { path: "/setup", name: "setup", component: () => import("./pages/Login.vue"), meta: { public: true, setup: true } },
     { path: "/:rest(.*)", redirect: "/" },

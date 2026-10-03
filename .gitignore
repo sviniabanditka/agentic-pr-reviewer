@@ -4,3 +4,4 @@ data/
 config.json
 .deploy.env
 web/dist/
+dist/

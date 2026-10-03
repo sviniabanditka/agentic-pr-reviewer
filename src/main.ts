@@ -1,5 +1,5 @@
 import { openDb, prune } from "./store/db.js";
-import { SecretBox } from "./store/secrets.js";
+import { rotateSecrets, SecretBox } from "./store/secrets.js";
 import { bootstrapAdmin } from "./auth/auth.js";
 import { importV1 } from "./store/import_v1.js";
 import { allAccounts } from "./store/repos.js";
@@ -15,6 +15,10 @@ const port = Number(env.PORT ?? 8080);
 const db = openDb(dataDir);
 const box = env.MASTER_KEY ? new SecretBox(env.MASTER_KEY) : undefined;
 const rt = new Runtime({ db, box, dataDir });
+if (box !== undefined && env.MASTER_KEY_OLD) {
+  const moved = rotateSecrets(db, box, new SecretBox(env.MASTER_KEY_OLD));
+  rt.log("info", `re-encrypted ${moved} secret(s) with the new MASTER_KEY; MASTER_KEY_OLD can be removed`);
+}
 prune(db);
 setInterval(() => prune(db), 6 * 60 * 60 * 1000);
 

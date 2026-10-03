@@ -14,8 +14,8 @@ import {
 import type { ClaudeLimits, ClaudeSettings } from "../review/claude.js";
 import type { Runtime } from "../runtime.js";
 
-export const PROVIDERS = ["claude-cli"] as const;
-export type Provider = (typeof PROVIDERS)[number];
+export { PROVIDER_IDS as PROVIDERS } from "../providers/index.js";
+import { PROVIDER_IDS } from "../providers/index.js";
 
 /** A GitHub client for the account; the token is decrypted for this call only. */
 export function githubFor(rt: Runtime, account: AccountRow): GitHub {
@@ -24,6 +24,7 @@ export function githubFor(rt: Runtime, account: AccountRow): GitHub {
 
 export function claudeSettingsFor(rt: Runtime, credential: CredentialRow, model: string): ClaudeSettings {
   return {
+    provider: credential.provider,
     oauthToken: getSecret(rt.db, rt.requireBox(), credential.secret_id),
     model,
     // One state dir per credential, so two subscriptions never share Claude Code's local state.
@@ -94,9 +95,9 @@ export function replaceAccountToken(rt: Runtime, account: AccountRow, token: str
 
 /** Validates a model credential with a probe, stores it encrypted. */
 export async function addCredential(rt: Runtime, userId: string, input: { provider: string; label?: string; token: string }): Promise<CredentialRow> {
-  if (!(PROVIDERS as readonly string[]).includes(input.provider)) throw new InputError(`unknown provider ${input.provider}`);
+  if (!PROVIDER_IDS.includes(input.provider)) throw new InputError(`unknown provider ${input.provider}`);
   const token = input.token.trim();
-  if (token.length < 20) throw new InputError("that does not look like a token from `claude setup-token`");
+  if (token.length < 20) throw new InputError(input.provider === "anthropic-api" ? "that does not look like an Anthropic API key" : "that does not look like a token from `claude setup-token`");
   const secretId = putSecret(rt.db, rt.requireBox(), userId, "claude-token", token);
   const credential = insertCredential(rt.db, {
     user_id: userId,
