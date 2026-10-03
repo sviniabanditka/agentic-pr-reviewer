@@ -3,9 +3,8 @@ import { harness } from "./harness.js";
 import { bootstrapAdmin, countUsers } from "../../src/auth/auth.js";
 
 describe("setup and login", () => {
-  it("an empty instance redirects pages to /setup and creates the admin once", async () => {
+  it("an empty instance reports needsSetup and creates the admin once", async () => {
     const h = harness();
-    expect((await h.call("GET", "/")).headers.get("location")).toBe("/setup");
     expect(await (await h.call("GET", "/api/v1/setup")).json()).toEqual({ needsSetup: true });
     const res = await h.call("POST", "/api/v1/setup", { login: "owner", password: "long enough pass" });
     expect(res.status).toBe(200);
@@ -13,21 +12,21 @@ describe("setup and login", () => {
     expect((await h.call("POST", "/api/v1/setup", { login: "second", password: "long enough pass" })).status).toBe(409);
   });
 
-  it("protects the API and pages without a session", async () => {
+  it("protects the API without a session", async () => {
     const h = harness();
     await h.signIn();
     h.clearCookie();
-    expect((await h.call("GET", "/api/state")).status).toBe(401);
-    expect((await h.call("GET", "/")).headers.get("location")).toStartWith("/login");
+    expect((await h.call("GET", "/api/v1/state")).status).toBe(401);
+    expect((await h.call("GET", "/api/v1/events")).status).toBe(401);
   });
 
   it("logs in, serves state, logs out", async () => {
     const h = harness();
     await h.signIn();
-    const state = (await (await h.call("GET", "/api/state")).json()) as { user: { login: string } };
+    const state = (await (await h.call("GET", "/api/v1/state")).json()) as { user: { login: string } };
     expect(state.user.login).toBe("owner");
     await h.call("POST", "/api/v1/auth/logout");
-    expect((await h.call("GET", "/api/state")).status).toBe(401);
+    expect((await h.call("GET", "/api/v1/state")).status).toBe(401);
   });
 
   it("rejects a wrong password and rate-limits repeated failures", async () => {
@@ -50,9 +49,9 @@ describe("csrf", () => {
   it("refuses mutations without the fetch header or from another origin", async () => {
     const h = harness();
     await h.signIn();
-    expect((await h.call("POST", "/api/poll", {}, { "x-requested-with": "" })).status).toBe(403);
-    expect((await h.call("POST", "/api/poll", {}, { origin: "https://evil.example" })).status).toBe(403);
-    expect((await h.call("POST", "/api/poll", {}, { origin: "http://localhost" })).status).toBe(200);
+    expect((await h.call("POST", "/api/v1/poll", {}, { "x-requested-with": "" })).status).toBe(403);
+    expect((await h.call("POST", "/api/v1/poll", {}, { origin: "https://evil.example" })).status).toBe(403);
+    expect((await h.call("POST", "/api/v1/poll", {}, { origin: "http://localhost" })).status).toBe(200);
   });
 });
 

@@ -1,61 +1,64 @@
-import { prDiff, viewPr } from "../github/gh.js";
+import { claudeSettingsFor, githubFor, recordLimits } from "../accounts/service.js";
 import { parseDiffOutput } from "../github/parse_diff.js";
 import { prepareDiff, renderDiffForPrompt } from "../review/diff.js";
 import { cacheKey } from "../review/cache_key.js";
-import { callClaude } from "../review/claude.js";
 import { isInconclusive, review, type ReviewResult } from "../review/run.js";
 import { isBlockingCandidate } from "../verdict/verdict.js";
-import { claudeSettingsFor, type Account } from "../config.js";
-import { recordClaudeLimits } from "../scheduler/poller.js";
+import { getAccountAny, getCredentialAny, getItemAny, updateItem } from "../store/repos.js";
 import { updateJob } from "./queue.js";
 import type { Runtime } from "../runtime.js";
 import type { JobRow } from "../store/types.js";
 
 export type Stage = "diff" | "review" | "confirm";
 
-function setStage(rt: Runtime, jobId: number, stage: Stage | undefined): void {
-  if (stage === undefined) rt.stages.delete(jobId);
-  else rt.stages.set(jobId, stage);
-  rt.bus.emit({ type: "stage", data: { jobId, stage: stage ?? null } });
+type Job = JobRow & { user_id: string | null; account_id: string | null; item_id: string | null };
+
+function setStage(rt: Runtime, job: Job, stage: Stage | undefined): void {
+  if (stage === undefined) rt.stages.delete(job.id);
+  else rt.stages.set(job.id, stage);
+  rt.bus.emit({ type: "stage", data: { jobId: job.id, stage: stage ?? null }, ...(job.user_id ? { userId: job.user_id } : {}) });
 }
 
 // ponytail: one job at a time — the Claude subscription limit, not CPU, is the bottleneck.
 export async function startWorker(rt: Runtime): Promise<never> {
   // A job left "running" was cut off by a restart; it was never published.
   rt.db.run("UPDATE jobs SET status = 'queued', started_at = NULL WHERE status = 'running'");
-
   for (;;) {
-    const job = rt.db.query("SELECT * FROM jobs WHERE status = 'queued' ORDER BY id LIMIT 1").get() as JobRow | null;
-    if (job === null) {
-      await rt.waitForWork(60_000);
-      continue;
-    }
-    const account = rt.cfg.accounts.find((a) => a.name === job.account);
-    if (account === undefined) {
-      updateJob(rt, job.id, { status: "error", error: "account no longer in config", finished_at: Date.now() });
-      continue;
-    }
-    await runJob(rt, account, job);
+    if (!(await runNext(rt))) await rt.waitForWork(60_000);
   }
 }
 
-async function runJob(rt: Runtime, account: Account, job: JobRow): Promise<void> {
-  const ctx = { account: account.name, jobId: job.id };
+/** Runs the oldest queued job; false when the queue is empty. Exposed for tests. */
+export async function runNext(rt: Runtime): Promise<boolean> {
+  const job = rt.db.query("SELECT * FROM jobs WHERE status = 'queued' ORDER BY id LIMIT 1").get() as Job | null;
+  if (job === null) return false;
+  await runJob(rt, job);
+  return true;
+}
+
+async function runJob(rt: Runtime, job: Job): Promise<void> {
+  const ctx = { account: job.account, jobId: job.id, ...(job.user_id ? { userId: job.user_id } : {}) };
   const startedAt = Date.now();
-  // Jobs queued before the model picker existed carry no model.
-  const model = job.model ?? account.model;
   updateJob(rt, job.id, { status: "running", started_at: startedAt });
-  rt.log("info", `reviewing ${job.repo}#${job.number} "${job.title}" with ${model}`, ctx);
 
   try {
-    setStage(rt, job.id, "diff");
-    const pr = await viewPr(account.githubToken, job.repo, job.number);
-    if (pr.headRefOid !== job.head_sha) {
-      rt.log("info", `new push since queued, reviewing @${pr.headRefOid.slice(0, 7)}`, ctx);
-      updateJob(rt, job.id, { head_sha: pr.headRefOid });
-    }
+    const account = job.account_id ? getAccountAny(rt.db, job.account_id) : null;
+    if (account === null) throw new Error("account no longer exists");
+    const credential = account.credential_id ? getCredentialAny(rt.db, account.credential_id) : null;
+    if (credential === null) throw new Error(`no Claude credential attached to @${account.login}`);
+    const model = job.model ?? account.model ?? rt.models()[0]!;
+    rt.log("info", `reviewing ${job.repo}#${job.number} "${job.title}" with ${model}`, ctx);
 
-    const files = parseDiffOutput(await prDiff(account.githubToken, job.repo, job.number));
+    setStage(rt, job, "diff");
+    const gh = githubFor(rt, account);
+    const pr = await gh.pull(job.repo, job.number);
+    if (pr.headSha !== job.head_sha) {
+      rt.log("info", `new push since queued, reviewing @${pr.headSha.slice(0, 7)}`, ctx);
+      updateJob(rt, job.id, { head_sha: pr.headSha });
+    }
+    if (job.item_id) updateItem(rt.db, job.item_id, { head_sha: pr.headSha, base_sha: pr.baseSha, state: pr.state });
+
+    const files = parseDiffOutput(await gh.pullDiff(job.repo, job.number));
     if (files.length === 0) {
       updateJob(rt, job.id, { status: "skipped", error: "empty diff", finished_at: Date.now() });
       rt.log("info", "empty diff, skipped", ctx);
@@ -73,27 +76,21 @@ async function runJob(rt: Runtime, account: Account, job: JobRow): Promise<void>
       result = JSON.parse(hit.result) as ReviewResult;
       rt.log("info", "verdict from cache", ctx);
     } else {
+      const settings = claudeSettingsFor(rt, credential, model);
       result = await review(
         {
           diff,
-          context: {
-            repo: job.repo,
-            number: job.number,
-            title: pr.title,
-            headSha: pr.headRefOid,
-            baseSha: pr.baseRefOid,
-            branch: pr.headRefName,
-          },
+          context: { repo: job.repo, number: job.number, title: pr.title, headSha: pr.headSha, baseSha: pr.baseSha, branch: pr.headRef },
           ...(intent !== undefined ? { intent } : {}),
         },
         {
           call: async (message) => {
-            const run = await callClaude(message, claudeSettingsFor(rt.cfg, account, model));
-            if (run.limits !== undefined) recordClaudeLimits(rt, account.name, run.limits);
+            const run = await rt.deps.callClaude(message, settings);
+            if (run.limits !== undefined) recordLimits(rt, credential, run.limits);
             return run;
           },
           log: (msg) => rt.log("info", msg, ctx),
-          stage: (stage) => setStage(rt, job.id, stage),
+          stage: (stage) => setStage(rt, job, stage),
         },
       );
     }
@@ -132,6 +129,10 @@ async function runJob(rt: Runtime, account: Account, job: JobRow): Promise<void>
     updateJob(rt, job.id, { status: "error", error: message, finished_at: Date.now() });
     rt.log("error", message, ctx);
   } finally {
-    setStage(rt, job.id, undefined);
+    setStage(rt, job, undefined);
+    if (job.item_id) {
+      const item = getItemAny(rt.db, job.item_id);
+      if (item) rt.bus.emit({ type: "prs", data: { item }, userId: item.user_id });
+    }
   }
 }
