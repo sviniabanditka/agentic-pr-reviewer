@@ -36,6 +36,8 @@ export interface ClaudeSettings {
   model: string;
   /** Per-account state dir, so two accounts never share Claude Code's local state. */
   configDir: string;
+  /** Kills the claude process when a running review is cancelled. */
+  signal?: AbortSignal;
 }
 
 export interface ClaudeRequest {
@@ -87,6 +89,7 @@ async function runClaude(args: string[], stdin: string, settings: ClaudeSettings
       stdout: "pipe",
       stderr: "pipe",
       timeout: TIMEOUT_MS,
+      ...(settings.signal ? { signal: settings.signal } : {}),
       env: {
         PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
         HOME: process.env.HOME ?? "/tmp",

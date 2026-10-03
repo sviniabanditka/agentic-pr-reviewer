@@ -37,7 +37,7 @@ export interface AccountRow {
 }
 
 export type TargetType = "search" | "repo" | "pr";
-export type Automation = "manual" | "auto-review";
+export type Automation = "manual" | "auto-review" | "auto-post";
 
 export interface TargetFilters {
   /** Include draft PRs. Default false. */
@@ -108,6 +108,10 @@ export interface ItemRow {
   comment_id: number | null;
   first_seen_at: number;
   last_seen_at: number;
+  ref_key: string;
+  compare_base: string | null;
+  compare_head: string | null;
+  patch_text: string | null;
 }
 
 type Value = string | number | null;
@@ -218,7 +222,7 @@ export function getItemAny(db: Database, id: string): ItemRow | null {
   return db.query("SELECT * FROM items WHERE id = ?").get(id) as ItemRow | null;
 }
 export function findItem(db: Database, accountId: string, repo: string, number: number): ItemRow | null {
-  return db.query("SELECT * FROM items WHERE account_id = ? AND repo = ? AND number = ?").get(accountId, repo, number) as ItemRow | null;
+  return db.query("SELECT * FROM items WHERE account_id = ? AND kind = 'pr' AND repo = ? AND number = ?").get(accountId, repo, number) as ItemRow | null;
 }
 export function itemsOfTarget(db: Database, targetId: string): ItemRow[] {
   return db.query("SELECT items.* FROM items, json_each(items.target_ids_json) t WHERE t.value = ?").all(targetId) as ItemRow[];
@@ -242,17 +246,21 @@ export function listItems(db: Database, userId: string, opts: { state?: string; 
     .query(`SELECT * FROM items WHERE ${where.join(" AND ")} ORDER BY updated_at DESC LIMIT ?`)
     .all(...args, opts.limit ?? 500) as ItemRow[];
 }
-export function insertItem(db: Database, row: Omit<ItemRow, "id" | "first_seen_at" | "last_seen_at" | "comment_id"> & { comment_id?: number | null }): ItemRow {
+export function insertItem(
+  db: Database,
+  row: Omit<ItemRow, "id" | "first_seen_at" | "last_seen_at" | "comment_id" | "ref_key" | "compare_base" | "compare_head" | "patch_text"> &
+    Partial<Pick<ItemRow, "comment_id" | "ref_key" | "compare_base" | "compare_head" | "patch_text">>,
+): ItemRow {
   const id = newId();
   const now = Date.now();
   db.query(
     `INSERT INTO items (id, user_id, account_id, kind, repo, number, title, url, author, author_is_bot, role, head_sha, base_sha, updated_at, state,
-       draft, labels_json, additions, deletions, changed_files, target_ids_json, comment_id, first_seen_at, last_seen_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       draft, labels_json, additions, deletions, changed_files, target_ids_json, comment_id, first_seen_at, last_seen_at, ref_key, compare_base, compare_head, patch_text)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id, row.user_id, row.account_id, row.kind, row.repo, row.number, row.title, row.url, row.author, row.author_is_bot, row.role,
     row.head_sha, row.base_sha, row.updated_at, row.state, row.draft, row.labels_json, row.additions, row.deletions, row.changed_files,
-    row.target_ids_json, row.comment_id ?? null, now, now,
+    row.target_ids_json, row.comment_id ?? null, now, now, row.ref_key ?? "", row.compare_base ?? null, row.compare_head ?? null, row.patch_text ?? null,
   );
   return getItemAny(db, id)!;
 }

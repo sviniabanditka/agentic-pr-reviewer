@@ -12,7 +12,14 @@ export type Queued = { job: JobRow } | { error: string };
 export interface EnqueueOptions {
   model?: string;
   profileId?: string;
+  /** Review only what changed since the last finished review of the item. */
+  incremental?: boolean;
+  /** Post the comment as soon as the review is done (targets with auto-post only). */
+  autoPost?: boolean;
 }
+
+/** Manual reviews jump ahead of what targets queued on their own. */
+const PRIORITY = { manual: 10, auto: 0 };
 
 export function enqueueReview(rt: Runtime, userId: string, itemId: string, opts: EnqueueOptions = {}, source = "panel"): Queued {
   const item = getItem(rt.db, userId, itemId);
@@ -31,22 +38,41 @@ export function enqueueReview(rt: Runtime, userId: string, itemId: string, opts:
   const active = rt.db.query("SELECT id FROM jobs WHERE item_id = ? AND status IN ('queued', 'running')").get(item.id);
   if (active !== null) return { error: "a review of this pull request is already queued or running" };
 
+  let baseJobId: number | null = null;
+  if (opts.incremental) {
+    if (item.kind !== "pr") return { error: "only a pull request can be reviewed incrementally" };
+    const base = rt.db
+      .query("SELECT id, head_sha FROM jobs WHERE item_id = ? AND status = 'done' AND result IS NOT NULL ORDER BY id DESC LIMIT 1")
+      .get(item.id) as { id: number; head_sha: string } | null;
+    if (base === null) return { error: "nothing to compare with: no finished review of this pull request yet" };
+    if (base.head_sha === item.head_sha) return { error: "no new commits since the last review" };
+    baseJobId = base.id;
+  }
+  const auto = source !== "panel";
+
   const job = rt.db
     .query(
       `INSERT INTO jobs (user_id, account_id, item_id, account, repo, number, title, url, role, head_sha, model, status, created_at,
-         profile_id, profile_name, profile_json, mode)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?) RETURNING *`,
+         profile_id, profile_name, profile_json, mode, kind, base_job_id, priority, auto_post)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
     )
     .get(userId, account.id, item.id, account.label, item.repo, item.number, item.title, item.url, item.role, item.head_sha, model, Date.now(),
-      profile.id, profile.name, JSON.stringify({ mode: profile.mode, options: JSON.parse(profile.options_json), version: profile.version }), profile.mode) as JobRow;
-  rt.log("info", `queued ${item.repo}#${item.number} @${item.head_sha.slice(0, 7)}: ${profile.name} with ${model} (${source})`, { account: account.label, jobId: job.id, userId });
+      profile.id, profile.name, JSON.stringify({ mode: profile.mode, options: JSON.parse(profile.options_json), version: profile.version }), profile.mode,
+      baseJobId ? "incremental" : "full", baseJobId, auto ? PRIORITY.auto : PRIORITY.manual, opts.autoPost && item.kind === "pr" ? 1 : 0) as JobRow;
+  const ref = item.kind === "pr" ? `${item.repo}#${item.number}` : `${item.repo} ${item.title}`;
+  rt.log("info", `queued ${ref} @${item.head_sha.slice(0, 7)}: ${profile.name} with ${model}${baseJobId ? ", incremental" : ""} (${source})`, { account: account.label, jobId: job.id, userId });
   emitJob(rt, job);
   rt.kickWorker();
   return { job };
 }
 
-/** Only a queued job can be cancelled; a running one has already spent its model run. */
+/** A queued job is dropped; a running one has its model process killed by the worker. */
 export function cancelJob(rt: Runtime, userId: string, id: number): JobRow | null {
+  const running = rt.db.query("SELECT * FROM jobs WHERE id = ? AND user_id = ? AND status = 'running'").get(id, userId) as JobRow | null;
+  if (running !== null) {
+    rt.running.get(id)?.abort();
+    return running;
+  }
   const job = rt.db
     .query("UPDATE jobs SET status = 'skipped', error = 'cancelled', finished_at = ? WHERE id = ? AND user_id = ? AND status = 'queued' RETURNING *")
     .get(Date.now(), id, userId) as (JobRow & { result?: string; user_id: string }) | null;

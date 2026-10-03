@@ -42,7 +42,8 @@ function pick(e: Event) {
     <TGlyph :review="last" class="text-center" />
     <div class="min-w-0">
       <div class="flex flex-wrap items-baseline gap-x-2 text-tertiary">
-        <span class="text-accent2">{{ item.repo }} #{{ item.number }}</span>
+        <span class="text-accent2">{{ item.kind === "patch" ? "patch" : item.repo }}{{ item.kind === "pr" || !item.kind ? ` #${item.number}` : "" }}</span>
+        <span v-if="item.kind === 'compare'" class="text-faint">compare</span>
         <span v-if="showAccount">as {{ account?.label }}</span>
         <span v-if="item.draft" class="text-faint">draft</span>
         <span v-if="item.state !== 'open'" class="text-warn">{{ item.state }}</span>

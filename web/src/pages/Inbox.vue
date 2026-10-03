@@ -38,16 +38,23 @@ const items = computed(() => {
 });
 
 const addOpen = ref(false);
+const addKind = ref<"pr" | "compare" | "patch">("pr");
 const addUrl = ref("");
+const cmp = ref({ repo: "", base: "", head: "" });
+const patch = ref({ title: "", text: "", repo: "" });
 const addAccount = ref(store.accounts[0]?.id ?? "");
 const adding = ref(false);
 async function addPr() {
   adding.value = true;
   try {
-    const { item } = await api.post<{ item: { id: string } }>("/items", { accountId: addAccount.value, url: addUrl.value });
+    const body = addKind.value === "pr" ? { url: addUrl.value }
+      : addKind.value === "compare" ? { kind: "compare", ...cmp.value }
+      : { kind: "patch", title: patch.value.title, patch: patch.value.text, ...(patch.value.repo ? { repo: patch.value.repo } : {}) };
+    const { item } = await api.post<{ item: { id: string } }>("/items", { accountId: addAccount.value, ...body });
     addUrl.value = "";
+    patch.value = { title: "", text: "", repo: "" };
     addOpen.value = false;
-    toast("pull request added");
+    toast(addKind.value === "pr" ? "pull request added" : addKind.value === "compare" ? "compare range added" : "patch added");
     await router.push(`/items/${item.id}`);
   } catch (e) {
     toast((e as Error).message, true);
@@ -77,16 +84,31 @@ const roles = [["all", "all"], ["review", "to review"], ["mine", "mine"], ["watc
   <div class="grid gap-4">
     <div class="flex flex-wrap items-center gap-3">
       <TPrompt :level="1">inbox</TPrompt>
-      <span class="text-tertiary">{{ items.length }} pull request{{ items.length === 1 ? "" : "s" }}</span>
+      <span class="text-tertiary">{{ items.length }} item{{ items.length === 1 ? "" : "s" }}</span>
       <div class="ml-auto flex items-center gap-1">
         <TBtn :busy="refreshing" @click="refresh">refresh</TBtn>
-        <TBtn tone="primary" @click="addOpen = !addOpen">add pr by url</TBtn>
+        <TBtn tone="primary" @click="addOpen = !addOpen">add</TBtn>
       </div>
     </div>
 
     <form v-if="addOpen" class="flex flex-wrap items-end gap-3 rounded-lg border border-subtle bg-surface px-4 py-3" @submit.prevent="addPr">
-      <label class="min-w-64 flex-1"><span class="label">pull request url or owner/repo#number</span>
+      <div class="flex w-full rounded-md border border-subtle bg-elevated p-0.5 sm:w-auto" role="group" aria-label="what to add">
+        <button v-for="[v, l] in ([['pr', 'pull request'], ['compare', 'compare range'], ['patch', 'paste a patch']] as const)" :key="v" type="button" class="rounded-sm px-2 py-0.5"
+          :class="addKind === v ? 'bg-active text-bright' : 'text-tertiary hover:text-secondary'" :aria-pressed="addKind === v" @click="addKind = v">{{ l }}</button>
+      </div>
+      <label v-if="addKind === 'pr'" class="min-w-64 flex-1"><span class="label">pull request url or owner/repo#number</span>
         <input v-model="addUrl" class="field" placeholder="https://github.com/owner/repo/pull/123" required autofocus></label>
+      <template v-else-if="addKind === 'compare'">
+        <label class="min-w-48 flex-1"><span class="label">repository</span><input v-model="cmp.repo" class="field" placeholder="owner/repo" required></label>
+        <label><span class="label">base</span><input v-model="cmp.base" class="field" placeholder="main or a sha" required></label>
+        <label><span class="label">head</span><input v-model="cmp.head" class="field" placeholder="feature or a sha" required></label>
+      </template>
+      <template v-else>
+        <label class="min-w-48 flex-1"><span class="label">title</span><input v-model="patch.title" class="field" placeholder="what the change does" required></label>
+        <label><span class="label">repository (optional, shown to the model)</span><input v-model="patch.repo" class="field" placeholder="owner/repo"></label>
+        <label class="w-full"><span class="label">unified diff — git diff output; it is kept for the retention window, never posted</span>
+          <textarea v-model="patch.text" class="field min-h-40 font-mono text-[12.5px]" placeholder="diff --git a/… b/…" required /></label>
+      </template>
       <label><span class="label">as account</span>
         <select v-model="addAccount" class="field w-auto"><option v-for="a in store.accounts" :key="a.id" :value="a.id">{{ a.label }} (@{{ a.login }})</option></select></label>
       <TBtn type="submit" tone="primary" :busy="adding">add</TBtn>

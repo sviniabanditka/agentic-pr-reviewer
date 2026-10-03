@@ -52,3 +52,28 @@ what was decided for now, and what the owner should confirm.
 13. **Summary mode posting.** A summary review posts its PR-description draft as the
     usual marked comment. It does not edit the PR description itself; that would need
     write access to the PR body and is easy to add as an output in phase 3.
+
+## Phase 3
+
+14. **Auto-post posts the comment, not a review.** Unattended posts always use the
+    editable marked comment; a GitHub review cannot be edited, so each push would add
+    a new one. Inline reviews stay a manual choice.
+15. **Automatic reviews are incremental** once a PR has a finished review. A force-push
+    that makes the old head unreachable falls back to a full review. Manual reviews are
+    full unless "review new commits" is pressed.
+16. **Compare items store the head as given** (branch or sha). Reviewing a compare on a
+    branch name again reviews wherever the branch is now; the cache key still changes
+    with the diff text.
+17. **Device login needs your OAuth app.** Settings → sign in with github takes the
+    client id of an OAuth app with device flow enabled; I did not create one. Pending
+    logins live in memory (a restart drops them).
+18. **Retention removes the stored findings and pasted patches only**; verdict, counts,
+    costs, events and the audit log stay. Events are still pruned after 14 days.
+19. **Summary mode does not edit the PR description** (question 13): still a comment.
+20. **No visual browser check this round**: the in-browser agent was not available;
+    types, build, 132 tests and an API smoke run on a copy of the prod DB passed.
+21. **No per-output templates yet.** The comment, review and notification texts are
+    fixed in code (`src/github/comment.ts`, `src/outputs/notify.ts`). Editable templates
+    are cheap to add once you know what you would change; tell me what.
+22. **Activity opens on the audit tab** ("audit log first" in the roadmap); the live log
+    is one click away.

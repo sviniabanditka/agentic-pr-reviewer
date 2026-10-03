@@ -19,7 +19,7 @@ export interface TargetFilters {
 export interface TargetParams { query?: string; repo?: string; number?: number; role?: "author" | "review_requested" | "watching" }
 export interface Target {
   id: string; accountId: string; name: string; type: "search" | "repo" | "pr"; params: TargetParams; filters: TargetFilters;
-  automation: "manual" | "auto-review"; model: string | null; profileId: string | null; pollSec: number; enabled: boolean;
+  automation: "manual" | "auto-review" | "auto-post"; model: string | null; profileId: string | null; pollSec: number; enabled: boolean;
   lastPolledAt: number | null; lastError: string | null; nextPollAt: number; openItems: number;
 }
 export interface Review {
@@ -29,22 +29,28 @@ export interface Review {
   findings: number | null; blocking: number | null; confirmed: number | null; runs: number | null; tokens_in: number | null;
   tokens_out: number | null; cost_usd: number | null; model: string | null; cached: number | null; comment_url: string | null; error: string | null;
   profile_id: string | null; profile_name: string | null; mode: string | null; chunks: number | null;
+  kind?: "full" | "incremental"; base_job_id?: number | null; priority?: number; auto_post?: number;
 }
 export interface Item {
-  id: string; accountId: string; repo: string; number: number; title: string; url: string; author: string; authorIsBot: boolean;
+  id: string; accountId: string; kind: "pr" | "compare" | "patch"; compareBase: string | null; compareHead: string | null; repo: string; number: number; title: string; url: string; author: string; authorIsBot: boolean;
   role: string; headSha: string | null; state: string; draft: boolean; labels: string[]; additions: number | null; deletions: number | null;
   changedFiles: number | null; updatedAt: string | null; targetIds: string[]; firstSeenAt: number; lastSeenAt: number; lastReview: Review | null;
 }
 export interface Finding {
   category: string; file: string; line_start: number; line_end: number; evidence: string; evidence_kind: string;
   claim: string; detail: string; evidenceCheck: "matched" | "not_found" | "skipped_absent";
+  dismissed?: boolean; dismissNote?: string; state?: "new" | "still_open"; marker?: string;
 }
 export interface PrSummary { title: string; summary: string; changes: string[]; risks: string[]; testing: string[] }
 export interface ReviewResult {
   outcome: string; verdict: { conclusion: string; title: string }; findings: Finding[]; confirmedMarkers: string[];
   skippedFiles: { path: string; reason: string }[]; usage: { runs: number; tokensIn: number; tokensOut: number; costUsd: number };
   mode?: string; blocking?: string[]; chunks?: number; summary?: PrSummary;
+  incremental?: { baseJobId: number; baseSha: string; fixed: Finding[] };
 }
+export interface Output { type: string; status: string; external_url: string | null; error: string | null; created_at: number }
+export interface Channel { id: string; type: "webhook" | "slack" | "telegram"; label: string; chatId: string | null; events: string[]; enabled: boolean; lastError: string | null }
+export interface AuditRow { id: number; account_id: string | null; action: string; subject: string; details: Record<string, unknown>; created_at: number }
 export interface Run {
   id: number; purpose: "review" | "confirm"; chunk: number; chunks: number; model: string; started_at: number; finished_at: number;
   outcome: string; tokens_in: number | null; tokens_out: number | null; cost_usd: number | null; error: string | null;

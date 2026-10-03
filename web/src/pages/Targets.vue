@@ -19,6 +19,7 @@ interface Draft {
   id: string | null; accountId: string; name: string; type: Target["type"]; query: string; repo: string; number: string;
   role: NonNullable<TargetParams["role"]>; drafts: boolean; bots: boolean; owners: string; labelsInclude: string; labelsExclude: string;
   authorsInclude: string; authorsExclude: string; maxChangedFiles: string; automation: Target["automation"]; model: string; profileId: string; pollSec: number; enabled: boolean;
+  confirmLogin: string; wasAutoPost: boolean;
 }
 const editing = ref<Draft | null>(null);
 const preview = ref<{ repo: string; number: number; title: string; author: string; draft: boolean; url: string }[] | null>(null);
@@ -29,7 +30,7 @@ const list = (s: string) => s.split(",").map((x) => x.trim()).filter(Boolean);
 function blank(): Draft {
   return { id: null, accountId: store.accounts[0]?.id ?? "", name: "", type: "search", query: "review-requested:@me", repo: "", number: "", role: "review_requested",
     drafts: false, bots: false, owners: "", labelsInclude: "", labelsExclude: "", authorsInclude: "", authorsExclude: "", maxChangedFiles: "",
-    automation: "manual", model: "", profileId: "", pollSec: 60, enabled: true };
+    automation: "manual", model: "", profileId: "", pollSec: 60, enabled: true, confirmLogin: "", wasAutoPost: false };
 }
 function edit(t: Target) {
   const f = t.filters;
@@ -37,7 +38,7 @@ function edit(t: Target) {
     number: t.params.number ? String(t.params.number) : "", role: t.params.role ?? "watching", drafts: !!f.drafts, bots: !!f.bots,
     owners: (f.owners ?? []).join(", "), labelsInclude: (f.labelsInclude ?? []).join(", "), labelsExclude: (f.labelsExclude ?? []).join(", "),
     authorsInclude: (f.authorsInclude ?? []).join(", "), authorsExclude: (f.authorsExclude ?? []).join(", "), maxChangedFiles: f.maxChangedFiles ? String(f.maxChangedFiles) : "",
-    automation: t.automation, model: t.model ?? "", profileId: t.profileId ?? "", pollSec: t.pollSec, enabled: t.enabled };
+    automation: t.automation, model: t.model ?? "", profileId: t.profileId ?? "", pollSec: t.pollSec, enabled: t.enabled, confirmLogin: "", wasAutoPost: t.automation === "auto-post" };
   preview.value = null;
 }
 function payload(d: Draft) {
@@ -49,7 +50,8 @@ function payload(d: Draft) {
   if (d.authorsInclude) filters.authorsInclude = list(d.authorsInclude);
   if (d.authorsExclude) filters.authorsExclude = list(d.authorsExclude);
   if (d.maxChangedFiles) filters.maxChangedFiles = Number(d.maxChangedFiles);
-  return { accountId: d.accountId, name: d.name || (d.type === "search" ? d.query : d.repo), type: d.type, params, filters, automation: d.automation, model: d.model || null, profileId: d.profileId || null, pollSec: d.pollSec, enabled: d.enabled };
+  return { accountId: d.accountId, name: d.name || (d.type === "search" ? d.query : d.repo), type: d.type, params, filters, automation: d.automation, model: d.model || null, profileId: d.profileId || null, pollSec: d.pollSec, enabled: d.enabled,
+    ...(d.automation === "auto-post" && d.confirmLogin ? { confirmLogin: d.confirmLogin } : {}) };
 }
 async function runPreview() {
   previewing.value = true;
@@ -96,6 +98,8 @@ function describe(t: Target) {
   return `${t.params.repo}#${t.params.number}`;
 }
 const autoPostWarning = computed(() => editing.value?.automation === "auto-review");
+const needsConfirm = computed(() => editing.value?.automation === "auto-post" && !editing.value.wasAutoPost);
+const draftLogin = computed(() => accountOf(editing.value?.accountId)?.login ?? "");
 </script>
 
 <template>
@@ -142,11 +146,15 @@ const autoPostWarning = computed(() => editing.value?.automation === "auto-revie
         <label class="flex items-center gap-2">poll every <input v-model.number="editing.pollSec" type="number" min="30" class="field w-24 py-1"> s</label>
       </div>
       <div class="grid gap-4 md:grid-cols-3">
-        <label><span class="label">automation</span><select v-model="editing.automation" class="field"><option value="manual">manual — list only</option><option value="auto-review">auto-review new commits (results stay private)</option></select></label>
+        <label><span class="label">automation</span><select v-model="editing.automation" class="field"><option value="manual">manual — list only</option><option value="auto-review">auto-review new commits (results stay private)</option><option value="auto-post">auto-review and post the comment</option></select></label>
         <label><span class="label">model for automatic reviews</span><select v-model="editing.model" class="field"><option value="">account default</option><option v-for="m in store.models" :key="m" :value="m">{{ m }}</option></select></label>
         <label><span class="label">profile for automatic reviews</span><select v-model="editing.profileId" class="field"><option value="">account default</option><option v-for="p in store.profiles" :key="p.id" :value="p.id">{{ p.name.toLowerCase() }}</option></select></label>
       </div>
       <p v-if="autoPostWarning" class="m-0 text-warn">// auto-review spends your claude quota on every new push it finds. nothing is posted without your press.</p>
+      <div v-if="editing.automation === 'auto-post'" class="grid gap-2 rounded-md border border-danger/40 px-4 py-3">
+        <p class="m-0 text-danger">// auto-post writes to other people's pull requests as @{{ draftLogin }} without asking you: one comment per pr, edited on each new push, never approve or request changes. every post is in the audit log.</p>
+        <label v-if="needsConfirm"><span class="label">type {{ draftLogin }} to confirm</span><input v-model="editing.confirmLogin" class="field max-w-64" :placeholder="draftLogin" autocomplete="off"></label>
+      </div>
       <div class="flex flex-wrap items-center gap-1">
         <TBtn :busy="previewing" @click="runPreview">preview</TBtn>
         <TBtn type="submit" tone="primary" :busy="saving">save</TBtn>
@@ -165,6 +173,7 @@ const autoPostWarning = computed(() => editing.value?.automation === "auto-revie
           <span class="font-medium text-bright">{{ t.name }}</span>
           <span class="text-tertiary">as {{ accountOf(t.accountId)?.label }}</span>
           <span v-if="t.automation === 'auto-review'" class="text-warn">auto-review</span>
+          <span v-if="t.automation === 'auto-post'" class="text-danger">auto-post</span>
           <span v-if="!t.enabled" class="text-faint">disabled</span>
           <span class="ml-auto text-accent2">{{ t.openItems }} open</span>
         </div>

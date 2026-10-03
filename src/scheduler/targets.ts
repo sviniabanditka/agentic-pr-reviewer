@@ -110,9 +110,19 @@ export async function pollTarget(rt: Runtime, target: TargetRow): Promise<{ foun
       // Search hits carry no size; it is known only once details were fetched.
       if (filters.maxChangedFiles && (item.changed_files ?? 0) > filters.maxChangedFiles) continue;
       seen.add(item.id);
-      if (target.automation === "auto-review" && newRevision && item.state === "open") {
+      if (target.automation !== "manual" && newRevision && item.state === "open") {
         const reviewed = rt.db.query("SELECT 1 FROM jobs WHERE item_id = ? AND head_sha = ? AND status != 'error'").get(item.id, item.head_sha);
-        if (reviewed === null && "job" in enqueueReview(rt, target.user_id, item.id, { ...(target.model ? { model: target.model } : {}), ...(target.profile_id ? { profileId: target.profile_id } : {}) }, `auto-review: ${target.name}`)) queued++;
+        if (reviewed === null) {
+          const opts = {
+            ...(target.model ? { model: target.model } : {}),
+            ...(target.profile_id ? { profileId: target.profile_id } : {}),
+            autoPost: target.automation === "auto-post",
+          };
+          // A new push on a reviewed PR costs only the delta; the first review is full.
+          let result = enqueueReview(rt, target.user_id, item.id, { ...opts, incremental: true }, `${target.automation}: ${target.name}`);
+          if ("error" in result) result = enqueueReview(rt, target.user_id, item.id, opts, `${target.automation}: ${target.name}`);
+          if ("job" in result) queued++;
+        }
       }
     }
     await releaseUnmatched(rt, gh, target, seen);
@@ -221,7 +231,9 @@ async function releaseUnmatched(rt: Runtime, gh: GitHub, target: TargetRow, seen
 }
 
 export function emitItem(rt: Runtime, item: ItemRow): void {
-  rt.bus.emit({ type: "prs", data: { item }, userId: item.user_id });
+  // A pasted patch can be megabytes; the panel never needs it.
+  const { patch_text: _p, ...row } = item;
+  rt.bus.emit({ type: "prs", data: { item: row }, userId: item.user_id });
 }
 
 /** Polls due targets; also answers "poll now" for one target or all of a user's. */

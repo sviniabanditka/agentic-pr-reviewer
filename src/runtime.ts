@@ -35,6 +35,8 @@ export class Runtime {
   readonly deps: Deps;
   readonly bus = new Bus();
   readonly stages = new Map<number, Stage>();
+  /** Running reviews, so a cancel can abort the model call. */
+  readonly running = new Map<number, AbortController>();
   /** Last GitHub quota seen per account id. */
   readonly githubRate = new Map<string, { core?: RateWindow; search?: RateWindow }>();
   readonly startedAt = Date.now();

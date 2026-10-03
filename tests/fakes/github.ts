@@ -44,6 +44,9 @@ export function fakeGitHub(users: Record<string, string>) {
   const comments: FakeComment[] = [];
   const writes: { method: string; path: string; body: unknown; user: string }[] = [];
   let nextComment = 1000;
+  /** "owner/repo:base...head" → diff text. */
+  const compares = new Map<string, string>();
+  const reviews: { id: number; repo: string; number: number; author: string; commit_id: string; body: string; event: string; comments: { path: string; line: number; body: string }[] }[] = [];
 
   const raw = (p: FakePull) => ({
     number: p.number,
@@ -146,9 +149,24 @@ export function fakeGitHub(users: Record<string, string>) {
         return json({ id: c.id, html_url: `https://github.com/${c.repo}/pull/${c.number}#issuecomment-${c.id}` });
       }
 
+      m = /^\/repos\/([^/]+\/[^/]+)\/compare\/(.+)$/.exec(path);
+      if (m) {
+        const diff = compares.get(`${m[1]}:${decodeURIComponent(m[2]!)}`);
+        return diff === undefined ? json({ message: "Not Found" }, 404) : new Response(diff, { headers: headers() });
+      }
+
+      m = /^\/repos\/([^/]+\/[^/]+)\/pulls\/(\d+)\/reviews$/.exec(path);
+      if (m && req.method === "POST") {
+        const body = (await req.json()) as { commit_id: string; body: string; event: string; comments: { path: string; line: number; body: string }[] };
+        writes.push({ method: "POST", path, body, user: login });
+        const id = nextComment++;
+        reviews.push({ id, repo: m[1]!, number: Number(m[2]), author: login, ...body });
+        return json({ id, html_url: `https://github.com/${m[1]}/pull/${m[2]}#pullrequestreview-${id}` });
+      }
+
       return json({ message: `fake: no route for ${req.method} ${path}` }, 404);
     },
   });
 
-  return { url: `http://localhost:${server.port}`, pulls, comments, writes, stop: () => server.stop(true) };
+  return { url: `http://localhost:${server.port}`, pulls, comments, writes, compares, reviews, stop: () => server.stop(true) };
 }

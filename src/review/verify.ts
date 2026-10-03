@@ -11,6 +11,11 @@ export interface VerifiedFinding extends Finding {
    * than the model, so the marker survives a reworded claim in the confirmation run.
    */
   anchor?: string;
+  /** Set when the item has a dismissal for this finding's marker. */
+  dismissed?: boolean;
+  dismissNote?: string;
+  /** Incremental reviews: whether the finding is new in this push or carried over. */
+  state?: "new" | "still_open";
 }
 
 function matchesLine(needle: string, lines: string[]): boolean {

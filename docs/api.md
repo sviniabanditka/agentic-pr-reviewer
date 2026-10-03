@@ -30,6 +30,8 @@ must send `x-requested-with: fetch`; a foreign `Origin` gets `403`. Errors are
 | PATCH | `/accounts/:id` | `{label?, credentialId?, model?, profileId?}` |
 | PUT | `/accounts/:id/token` | `{token}` |
 | POST | `/accounts/:id/check` | re-checks login, scopes, quota |
+| POST | `/accounts/device` | `{label?}` → `{id, userCode, verificationUri, interval}`; GitHub device login (needs the admin setting `githubOauthClientId`) |
+| POST | `/accounts/device/:id` | one poll: 202 `{status: "pending"}` or 201 `{status: "done", account}` |
 | DELETE | `/accounts/:id` | also removes its targets and items |
 | GET | `/credentials` | |
 | POST | `/credentials` | `{provider: "claude-cli", token, label?}` — probed; refused tokens are not kept |
@@ -57,7 +59,10 @@ A credential: `{id, provider, label, tokenHint, status, statusDetail, limits: {f
 `review_requested` or `watching` (derived from the query when omitted).
 `filters`: `drafts`, `bots` (include them; default no), `labelsInclude`, `labelsExclude`,
 `authorsInclude`, `authorsExclude`, `owners` (never hides review requests),
-`maxChangedFiles`. `automation`: `manual` or `auto-review` (review each new head sha; results stay private).
+`maxChangedFiles`. `automation`: `manual`, `auto-review` (review each new head sha; results
+stay private) or `auto-post` (review, then post the marked comment). Turning `auto-post` on
+(or moving such a target to another account) needs `confirmLogin` equal to the account's
+login; it is audited. Automatic reviews of a PR already reviewed are incremental.
 
 ## Items
 
@@ -66,6 +71,8 @@ A credential: `{id, provider, label, tokenHint, status, statusDetail, limits: {f
 | GET | `/items?state=open\|closed\|all&accountId=&targetId=` | each with `lastReview` |
 | GET | `/items/:id` | `{item, reviews}` |
 | POST | `/items` | `{accountId, url}` — adds a PR by URL or `owner/repo#n` (a `pr` target is created) |
+| POST | `/items` | `{accountId, kind: "compare", repo, base, head}` — a compare range, checked against GitHub |
+| POST | `/items` | `{accountId, kind: "patch", title, patch, repo?}` — a pasted unified diff (≤ 2 MB); the same text returns the same item |
 | POST | `/items/:id/archive`, `/items/:id/unarchive` | |
 
 ## Reviews
@@ -73,10 +80,17 @@ A credential: `{id, provider, label, tokenHint, status, statusDetail, limits: {f
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/reviews?status=&itemId=&limit=` | summaries, newest first |
-| GET | `/reviews/:id` | `{review, result, events, runs, stage}` |
-| POST | `/reviews` | `{itemId, model?, profileId?}` → 202 `{id}`; 409 when the item or profile is unknown, the account has no credential, the model is not allowed, or a review is already queued/running |
-| POST | `/reviews/:id/cancel` | queued only |
-| POST | `/reviews/:id/publish` | `{url}`; the only endpoint that writes to GitHub |
+| GET | `/reviews/:id` | `{review, result, events, runs, outputs, stage, purged}`; `result` has the item's dismissals applied and a `marker` per finding; `purged` once retention removed it |
+| POST | `/reviews` | `{itemId, model?, profileId?, incremental?}` → 202 `{id}`; 409 when the item or profile is unknown, the account has no credential, the model is not allowed, a review is already queued/running, or (incremental) there is no finished review or no new commit |
+| POST | `/reviews/:id/cancel` | queued, or running (the model process is killed) |
+| POST | `/reviews/:id/publish` | `{output?: "pr-comment" \| "pr-review"}` → `{url}`; PR items only. The only endpoint that writes to GitHub |
+| GET | `/reviews/:id/export.md`, `/reviews/:id/export.json` | download |
+| GET | `/reviews/:id/compare/:other` | `{a, b, onlyA, onlyB, both}` by finding marker |
+| POST | `/reviews/:id/dismissals` | `{marker, note?}` → `{result}`; per item, so it carries over to later reviews |
+| DELETE | `/reviews/:id/dismissals` | `{marker}` → `{result}` |
+
+Manual reviews are queued with priority 10, automatic ones with 0; the worker takes the
+highest priority, then the oldest.
 
 ## Profiles
 
@@ -100,8 +114,19 @@ for the user's finished reviews.
 
 ## Logs and settings
 
-`GET /logs?level=info|warn|error&limit=` · `GET /settings` → `{models}` ·
-`PATCH /settings` `{models}` (admin).
+`GET /logs?level=info|warn|error&limit=` · `GET /audit?limit=` → `{audit: [{action, subject, details, created_at}]}` ·
+`GET /settings` → `{models, retentionDays, githubOauthClientId}` ·
+`PATCH /settings` `{retentionDays?}` (own), `{models?, githubOauthClientId?}` (admin).
+
+## Notification channels
+
+| Method | Path | Body |
+|---|---|---|
+| GET | `/channels` | `{channels, events}` — the URL / bot token is never returned |
+| POST | `/channels` | `{type: "webhook"\|"slack"\|"telegram", label, secret, chatId?, events}`; `events` ⊂ `done, blocking, failed, posted` |
+| PATCH | `/channels/:id` | `{label?, events?, enabled?}` |
+| POST | `/channels/:id/test` | sends a test notice now |
+| DELETE | `/channels/:id` | |
 
 ## SSE: `GET /events`
 

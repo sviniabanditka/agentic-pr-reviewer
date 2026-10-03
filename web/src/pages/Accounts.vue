@@ -33,6 +33,33 @@ async function addAccount() {
   if (!busy["add-account"]) Object.assign(newAccount, { token: "", label: "", open: false });
   newAccount.busy = false;
 }
+const device = reactive<{ id: string; userCode: string; verificationUri: string; interval: number } | { id: null }>({ id: null });
+async function deviceLogin() {
+  try {
+    Object.assign(device, await api.post("/accounts/device", { label: newAccount.label || undefined }));
+    void pollDevice();
+  } catch (e) {
+    toast((e as Error).message, true);
+  }
+}
+async function pollDevice() {
+  while (device.id) {
+    await new Promise((r) => setTimeout(r, ("interval" in device ? device.interval : 5) * 1000 + 500));
+    if (!device.id) return;
+    try {
+      const r = await api.post<{ status: string }>(`/accounts/device/${device.id}`);
+      if (r.status === "done") {
+        Object.assign(device, { id: null });
+        Object.assign(newAccount, { token: "", label: "", open: false });
+        toast("account added");
+        await refreshState();
+      }
+    } catch (e) {
+      Object.assign(device, { id: null });
+      toast((e as Error).message, true);
+    }
+  }
+}
 async function addCredential() {
   newCred.busy = true;
   await run("add-cred", () => api.post("/credentials", { provider: "claude-cli", token: newCred.token, label: newCred.label || undefined }), "credential added");
@@ -65,6 +92,16 @@ const inputValue = (e: Event) => (e.target as HTMLInputElement).value;
           <label><span class="label">token</span><input v-model="newAccount.token" class="field" type="password" autocomplete="off" required></label>
           <label><span class="label">label (optional)</span><input v-model="newAccount.label" class="field" placeholder="work"></label>
           <TBtn type="submit" tone="primary" :busy="newAccount.busy">check &amp; save</TBtn>
+        </div>
+        <div class="flex flex-wrap items-center gap-2 text-tertiary">
+          <span>// or</span>
+          <TBtn v-if="!device.id" @click="deviceLogin">sign in with github</TBtn>
+          <template v-else-if="'userCode' in device">
+            <span>open <a :href="device.verificationUri" target="_blank" rel="noopener" class="text-accent hover:underline">{{ device.verificationUri }}</a> and enter</span>
+            <span class="rounded-sm bg-base px-2 py-0.5 text-bright tracking-widest">{{ device.userCode }}</span>
+            <span class="text-faint">waiting…</span>
+            <TBtn @click="Object.assign(device, { id: null })">cancel</TBtn>
+          </template>
         </div>
       </form>
       <ul class="m-0 grid gap-2 p-0">

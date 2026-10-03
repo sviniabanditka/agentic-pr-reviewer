@@ -120,7 +120,7 @@ function toItem(row: Record<string, unknown>, lastReview: Review | null): Item {
   if ("accountId" in row) return { ...(row as unknown as Item), lastReview };
   const r = row as Record<string, string & number>;
   return {
-    id: r.id, accountId: r.account_id, repo: r.repo, number: r.number, title: r.title, url: r.url, author: r.author,
+    id: r.id, accountId: r.account_id, kind: (r.kind || "pr") as Item["kind"], compareBase: r.compare_base, compareHead: r.compare_head, repo: r.repo, number: r.number, title: r.title, url: r.url, author: r.author,
     authorIsBot: r.author_is_bot === 1, role: r.role, headSha: r.head_sha, state: r.state, draft: r.draft === 1,
     labels: JSON.parse(r.labels_json || "[]"), additions: r.additions, deletions: r.deletions, changedFiles: r.changed_files,
     updatedAt: r.updated_at, targetIds: JSON.parse(r.target_ids_json || "[]"), firstSeenAt: r.first_seen_at, lastSeenAt: r.last_seen_at, lastReview,

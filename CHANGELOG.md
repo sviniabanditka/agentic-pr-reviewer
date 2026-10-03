@@ -4,6 +4,24 @@ Newest first.
 
 ---
 
+# 2026-10-03 — v2 phase 3: outputs, incremental reviews, compare and patch
+
+- Post a review as the marked comment or as a GitHub review with inline comments
+  (always `COMMENT`); export as Markdown or JSON. Every GitHub write and credential
+  change lands in an audit log (Activity → audit).
+- Incremental reviews: only the commits since the last review go to the model; earlier
+  findings are re-checked against the whole PR and shown as still open or fixed.
+  Automatic reviews of an already reviewed PR are incremental.
+- Compare ranges and pasted patches as items; reviewed and exported, never posted.
+- Dismiss a finding: it stops blocking and leaves the comment, for later reviews too.
+- Cancel a running review; manual reviews jump ahead of automatic ones.
+- `auto-post` target automation, turned on by typing the account login.
+- Notifications to Slack, Telegram or a webhook; per-user retention of findings
+  (default 90 days); GitHub device login when an admin sets an OAuth client id.
+- Migration 0005.
+
+---
+
 # 2026-09-30 — reviews stay private until posted
 
 - A finished review is only stored and shown in the panel; nothing is written to the

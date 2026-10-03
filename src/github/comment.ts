@@ -26,14 +26,16 @@ export function renderComment(result: ReviewResult, meta: CommentMeta): string {
     "",
     `**${verdictIcon(result)} ${result.verdict.title}**`,
     "",
-    `<sub>commit \`${meta.headSha.slice(0, 7)}\` · ${meta.model} · ${Math.round(meta.elapsedMs / 1000)}s</sub>`,
+    `<sub>commit \`${meta.headSha.slice(0, 7)}\` · ${meta.model} · ${Math.round(meta.elapsedMs / 1000)}s${result.incremental ? ` · changes since \`${result.incremental.baseSha.slice(0, 7)}\`` : ""}</sub>`,
   ].join("\n");
 
   const confirmed = new Set(result.confirmedMarkers);
-  const confirmedBlocking = result.findings.filter((f) => isBlocking(f) && confirmed.has(findingMarker(f)));
-  const unconfirmed = result.findings.filter((f) => isBlocking(f) && !confirmed.has(findingMarker(f)));
-  const notes = result.findings.filter((f) => !isBlocking(f) && f.evidenceCheck !== "not_found");
-  const lowConfidence = result.findings.filter((f) => !isBlocking(f) && f.evidenceCheck === "not_found");
+  const active = result.findings.filter((f) => !f.dismissed);
+  const dismissed = result.findings.filter((f) => f.dismissed);
+  const confirmedBlocking = active.filter((f) => isBlocking(f) && confirmed.has(findingMarker(f)));
+  const unconfirmed = active.filter((f) => isBlocking(f) && !confirmed.has(findingMarker(f)));
+  const notes = active.filter((f) => !isBlocking(f) && f.evidenceCheck !== "not_found");
+  const lowConfidence = active.filter((f) => !isBlocking(f) && f.evidenceCheck === "not_found");
 
   const sections = [
     section("### 🟥 Blocking", confirmedBlocking, meta),
@@ -42,6 +44,12 @@ export function renderComment(result: ReviewResult, meta: CommentMeta): string {
   ].filter((s) => s !== "");
 
   const tail: string[] = [];
+  if (result.incremental?.fixed.length) {
+    tail.unshift(`### ✅ Fixed since \`${result.incremental.baseSha.slice(0, 7)}\`\n\n${result.incremental.fixed.map((f) => `- ~~**\`${f.category}\`** \`${f.file}\` — ${f.claim}~~`).join("\n")}`);
+  }
+  if (dismissed.length > 0) {
+    tail.push(details(`Dismissed (${dismissed.length})`, dismissed.map((f) => `- **\`${f.category}\`** \`${f.file}\` — ${f.claim}${f.dismissNote ? ` _(${f.dismissNote})_` : ""}`).join("\n")));
+  }
   if (lowConfidence.length > 0) {
     tail.push(details(`Low confidence — quoted evidence not found in the diff (${lowConfidence.length})`, lowConfidence.map((f) => renderFinding(f, meta)).join("\n\n")));
   }
@@ -67,7 +75,7 @@ function renderFinding(f: VerifiedFinding, meta: CommentMeta): string {
   const range = f.line_start === f.line_end ? `${f.line_start}` : `${f.line_start}-${f.line_end}`;
   const anchor = f.line_start === f.line_end ? `L${f.line_start}` : `L${f.line_start}-L${f.line_end}`;
   const link = `https://github.com/${meta.repo}/blob/${meta.headSha}/${f.file}#${anchor}`;
-  const lines = [`**\`${f.category}\`** [\`${f.file}:${range}\`](${link}) — **${f.claim}**`, "", f.detail];
+  const lines = [`**\`${f.category}\`**${f.state === "new" ? " _new_" : ""} [\`${f.file}:${range}\`](${link}) — **${f.claim}**`, "", f.detail];
   if (f.evidence.trim() !== "") {
     const fence = f.evidence.includes("```") ? "````" : "```";
     lines.push("", details("evidence", `${fence}\n${f.evidence}\n${fence}`));
@@ -96,4 +104,16 @@ function renderSummary(result: ReviewResult, meta: CommentMeta): string {
     list("Risks", sm.risks),
     list("How to test", sm.testing),
   ].filter((x) => x !== "").join("\n\n").slice(0, BODY_LIMIT);
+}
+
+/** Inline comments for a GitHub review: quoted, present-side findings on lines the diff contains. */
+export function renderInline(result: ReviewResult, inDiff: (path: string, line: number) => boolean): { path: string; line: number; body: string }[] {
+  return result.findings
+    .filter((f) => !f.dismissed && f.evidence_kind === "present" && f.evidenceCheck === "matched" && inDiff(f.file, Math.max(f.line_start, f.line_end)))
+    .map((f) => ({ path: f.file, line: Math.max(f.line_start, f.line_end), body: `**\`${f.category}\`** ${f.claim}\n\n${f.detail}` }));
+}
+
+/** The comment without the hidden marker, for downloads. */
+export function renderMarkdown(result: ReviewResult, meta: CommentMeta & { title: string; number: number }): string {
+  return `# ${meta.repo} #${meta.number}: ${meta.title}\n\n${renderComment(result, meta).replace(`${COMMENT_MARKER}\n`, "")}\n`;
 }

@@ -21,6 +21,8 @@ export interface ReviewResult {
   blocking?: string[];
   chunks?: number;
   summary?: PrSummary;
+  /** Incremental reviews: what the review compared against and what got fixed since. */
+  incremental?: { baseJobId: number; baseSha: string; fixed: VerifiedFinding[] };
 }
 
 export interface ReviewInput {
@@ -43,6 +45,14 @@ export interface ReviewDeps {
   stage?: (stage: "review" | "confirm") => void;
   /** Waits between attempts of one run; tests pass zeroes. */
   retryDelaysMs?: number[];
+  /** Aborts between and during model calls when the review is cancelled. */
+  signal?: AbortSignal;
+}
+
+export class Cancelled extends Error {
+  constructor() {
+    super("cancelled");
+  }
 }
 
 const INCONCLUSIVE: Partial<Record<ReviewOutcome, true>> = { didnt_look: true, error: true };
@@ -71,8 +81,10 @@ export async function review(input: ReviewInput, deps: ReviewDeps): Promise<Revi
     const req = { system, user: buildUserMessage(input.context, renderChunk(diff, diff.chunks[chunk]!), intent), schema };
     const label = n > 1 ? `${purpose} ${chunk + 1}/${n}` : purpose;
     for (let attempt = 0; ; attempt++) {
+      if (deps.signal?.aborted) throw new Cancelled();
       deps.log(`${label}: model run ${attempt + 1}`);
       const result = await deps.call(req, { purpose, chunk, chunks: n });
+      if (deps.signal?.aborted) throw new Cancelled();
       runs.push(result);
       if (!isInconclusive(result.outcome) || attempt >= delays.length) return result;
       deps.log(`${label}: ${result.outcome} (${result.errorMessage ?? "-"}), retry in ${delays[attempt]! / 1000}s`);

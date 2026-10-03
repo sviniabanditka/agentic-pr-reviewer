@@ -219,6 +219,24 @@ export class GitHub {
   }
 
   /**
+   * A review with inline comments, always event COMMENT (never approve or request changes).
+   * Each call creates a new review; GitHub has no edit for submitted reviews.
+   */
+  async createReview(
+    repo: string,
+    number: number,
+    commitId: string,
+    body: string,
+    comments: { path: string; line: number; body: string }[],
+  ): Promise<PostedComment> {
+    const review = await this.json<{ id: number; html_url: string }>(`/repos/${repo}/pulls/${number}/reviews`, {
+      method: "POST",
+      body: JSON.stringify({ commit_id: commitId, body, event: "COMMENT", comments: comments.map((c) => ({ ...c, side: "RIGHT" })) }),
+    });
+    return { id: review.id, url: review.html_url };
+  }
+
+  /**
    * Edits this account's marked comment on the PR, or creates it. Found by marker and
    * author, never by "last comment of the user": that may be one written by hand.
    */
