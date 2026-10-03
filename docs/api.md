@@ -1,126 +1,97 @@
-# Panel HTTP API
+# HTTP API v1
 
-Served by `src/api/app.ts` (Hono) on `PORT` (8080). Everything except `/healthz`,
-`/login`, `/setup` and the auth endpoints below requires a session cookie
-(`apr_session`, HttpOnly, SameSite=Strict, Secure behind HTTPS; 30 days absolute,
-7 days idle). Pages redirect to `/login` (or `/setup` on an empty instance); API calls
-answer `401`.
-
-Every non-GET request must send `x-requested-with: fetch`, and a request with an
-`Origin` from another host is refused with `403`: a form on another site can carry the
-cookie but cannot set that header.
+Base path `/api/v1`, JSON in and out. Everything except `GET/POST /setup` and
+`POST /auth/login` needs the session cookie (`apr_session`). Every non-GET request
+must send `x-requested-with: fetch`; a foreign `Origin` gets `403`. Errors are
+`{ "error": "sentence" }` with 400 (bad input), 401, 403, 404 or 409 (refused).
 
 ## Auth
 
-| Endpoint | Body | Notes |
+| Method | Path | Body | Notes |
+|---|---|---|---|
+| GET | `/setup` | — | `{needsSetup}` |
+| POST | `/setup` | `{login, password}` | Only while no user exists; creates the admin, signs in, runs the v1 import |
+| POST | `/auth/login` | `{login, password}` | 10 failures per IP or login in 15 min → 429 |
+| POST | `/auth/logout` | — | |
+| GET | `/auth/me` | — | `{user: {id, login, role}}` |
+
+## Overview
+
+`GET /state` → `{user, startedAt, models, providers, accounts, credentials, targets, stages, totals}`
+— the SPA's bootstrap. `stages` maps running review ids to `diff`/`review`/`confirm`;
+`totals` covers the user's finished reviews of the last 24 h.
+
+## Accounts and credentials
+
+| Method | Path | Body |
 |---|---|---|
-| `GET /api/v1/setup` | — | `{needsSetup}` |
-| `POST /api/v1/setup` | `{login, password}` | Only while no user exists; creates the admin and signs in. Password ≥ 10 characters. |
-| `POST /api/v1/auth/login` | `{login, password}` | Sets the session cookie. 10 failures per IP or login in 15 minutes → `429`. |
-| `POST /api/v1/auth/logout` | — | Deletes the session. |
-| `GET /api/v1/auth/me` | — | `{user: {id, login, role}}` |
+| GET | `/accounts` | |
+| POST | `/accounts` | `{token, label?}` — checked with `GET /user`, stored encrypted |
+| PATCH | `/accounts/:id` | `{label?, credentialId?, model?}` |
+| PUT | `/accounts/:id/token` | `{token}` |
+| POST | `/accounts/:id/check` | re-checks login, scopes, quota |
+| DELETE | `/accounts/:id` | also removes its targets and items |
+| GET | `/credentials` | |
+| POST | `/credentials` | `{provider: "claude-cli", token, label?}` — probed; refused tokens are not kept |
+| PATCH | `/credentials/:id` | `{label}` |
+| POST | `/credentials/:id/check` | refreshes the 5-hour and 7-day usage |
+| DELETE | `/credentials/:id` | |
 
-## `GET /healthz`
+An account: `{id, login, label, tokenHint, scopes, credentialId, model, status, statusDetail, checkedAt, github: {core, search}}`.
+A credential: `{id, provider, label, tokenHint, status, statusDetail, limits: {fiveHour, sevenDay, checkedAt}, checkedAt}`.
 
-`200 ok`, no auth. Used by the Kubernetes probes.
+## Targets
 
-## `GET /`
+| Method | Path | Body |
+|---|---|---|
+| GET | `/targets` | |
+| POST | `/targets/preview` | a target body → `{items: [first 20 matches]}`, nothing stored |
+| POST | `/targets` | `{accountId, name, type, params, filters?, automation?, model?, pollSec?, enabled?}` |
+| PATCH | `/targets/:id` | any subset |
+| POST | `/targets/:id/poll` | polls now |
+| DELETE | `/targets/:id` | |
+| POST | `/poll` | polls every enabled target of the user |
 
-The panel (`src/panel.html`).
+`type` and `params`: `search` → `{query, role?}` (qualifiers after `is:pr is:open archived:false`);
+`repo` → `{repo: "owner/name"}`; `pr` → `{repo, number}`. `role` is `author`,
+`review_requested` or `watching` (derived from the query when omitted).
+`filters`: `drafts`, `bots` (include them; default no), `labelsInclude`, `labelsExclude`,
+`authorsInclude`, `authorsExclude`, `owners` (never hides review requests),
+`maxChangedFiles`. `automation`: `manual` or `auto-review` (review each new head sha; results stay private).
 
-## `GET /api/state`
+## Items
 
-Everything the panel needs to render:
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/items?state=open\|closed\|all&accountId=&targetId=` | each with `lastReview` |
+| GET | `/items/:id` | `{item, reviews}` |
+| POST | `/items` | `{accountId, url}` — adds a PR by URL or `owner/repo#n` (a `pr` target is created) |
+| POST | `/items/:id/archive`, `/items/:id/unarchive` | |
 
-```jsonc
-{
-  "startedAt": 1790769919263,
-  "models": ["sonnet", "opus", "haiku"],
-  "accounts": [
-    { "name": "work", "login": "ksivenkov96", "verifiedLogin": "ksivenkov96",
-      "claudeReady": true, "model": "sonnet",
-      "lastPollAt": 1790769924020, "lastPollMs": 4757, "openPrs": 4,
-      "claude": { "fiveHour": { "utilization": 0.07, "resetsAt": 1790784000000 },
-                  "sevenDay": { "utilization": 0.09, "resetsAt": 1791277200000 },
-                  "status": "allowed", "checkedAt": 1790770000000 },
-      "github": { "core": { "limit": 5000, "remaining": 4970, "reset": 1790772000000 },
-                  "search": { "limit": 30, "remaining": 28, "reset": 1790770060000 } } }
-  ],
-  "prs": [
-    { "account": "work", "repo": "owner/repo", "number": 10, "title": "…",
-      "url": "https://github.com/…", "author": "someone", "role": "author",
-      "updatedAt": "2026-09-30T10:00:00Z", "headSha": "5497500…" }
-  ],
-  "stages": { "12": "review" },
-  "jobs": [ /* last 200 job rows, newest first, without the result JSON */ ],
-  "events": [ /* last 300 log lines, oldest first */ ],
-  "totals": { "reviews": 3, "runs": 4, "tokens_in": 120000, "tokens_out": 6000, "cost_usd": 0.52 }
-}
-```
+## Reviews
 
-`role` is `author`, `review_requested` or `author+reviewer`. `claude` is the Claude
-subscription's usage windows (utilization 0..1) from the latest run or limits check;
-`claudeError` is set when that check failed. `github` is the token's REST and search
-quota. `stages` maps a running job id to `diff`, `review`, `confirm` or `comment`. `totals` covers finished
-reviews of the last 24 h; `cost_usd` is what the runs would cost at API prices
-(informational on a subscription).
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/reviews?status=&itemId=&limit=` | summaries, newest first |
+| GET | `/reviews/:id` | `{review, result, events, stage}` |
+| POST | `/reviews` | `{itemId, model?}` → 202 `{id}`; 409 when the item is unknown, the account has no credential, the model is not allowed, or a review is already queued/running |
+| POST | `/reviews/:id/cancel` | queued only |
+| POST | `/reviews/:id/publish` | `{url}`; the only endpoint that writes to GitHub |
 
-## `GET /api/jobs/:id`
+## Logs and settings
 
-One job with its parsed `result` (verdict, findings, skipped files, usage) and every
-log line tied to it (`events`).
+`GET /logs?level=info|warn|error&limit=` · `GET /settings` → `{models}` ·
+`PATCH /settings` `{models}` (admin).
 
-## `GET /api/stream`
-
-Server-sent events. A `: connected` comment is sent at once and a `: ping` every
-20 s.
+## SSE: `GET /events`
 
 | Event | Data |
 |---|---|
-| `log` | an event row: `{id, ts, level, account, job_id, msg}` |
-| `job` | a job row, whenever a job is queued or changes status |
-| `status` | an account status, after each poll |
-| `prs` | `{account, prs}` — that account's fresh open-PR list |
-| `stage` | `{jobId, stage}` — a running job moved on; `stage: null` when it ended |
+| `hello` | `{startedAt}` — first message; a changed value means the server restarted |
+| `log` | an event row |
+| `job` | a review summary on every change |
+| `stage` | `{jobId, stage}`; `null` when the review ended |
+| `prs` | `{item}` — an item row was created or changed |
+| `status` | `{credential}` or `{target}` after a check or poll |
 
-## `POST /api/review`
-
-```json
-{ "account": "work", "repo": "owner/repo", "number": 10, "model": "opus" }
-```
-
-`model` is optional (the account's default) and must be in the config's `models`.
-
-| Code | Body |
-|---|---|
-| `202` | `{jobId}` — queued |
-| `400` | malformed body |
-| `409` | `{error}` — unknown account, no Claude token, model not allowed, PR not in the latest open list, or a review of it already queued/running |
-
-## `POST /api/jobs/:id/publish`
-
-Posts a finished review as the PR comment of that account, or edits the one already
-there, and returns `{url}`. Earlier reviews of the same PR lose their `comment_url`.
-`409` with `{error}` when the review is not `done`, the account is gone, the same
-review is already being posted, or GitHub refuses. This is the only endpoint that
-writes to GitHub.
-
-## `POST /api/jobs/:id/cancel`
-
-Cancels a queued review (status `skipped`, error `cancelled`). `409` when the job is not
-queued: a running review has already spent its model run and is left to finish.
-
-## `POST /api/limits`
-
-```json
-{ "account": "work" }
-```
-
-Reads the Claude subscription's usage windows by sending a tiny Haiku request for that
-account (or every account when `account` is omitted), then returns `{ok: true}`. The
-daemon also does this on start and every 30 minutes; every review refreshes them too.
-
-## `POST /api/poll`
-
-Runs a poll of every account now (joins one already running) and returns `{ok: true}`
-when it finishes.
+Events carry a user id server-side; each stream only receives its own user's events.

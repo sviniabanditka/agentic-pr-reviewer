@@ -1,130 +1,100 @@
 # Agentic PR Reviewer
 
-AI review of GitHub pull requests that looks for what should hold a merge — a missing
-authorization check, a removed guard, a broken contract, an irreversible operation —
-plus comment slop (NICHE) and gaps between what the author claims and what the diff
-does (INTENT).
+A self-hosted review desk for GitHub pull requests. It watches the PRs you care about
+across one or more GitHub accounts, reviews a PR's diff with Claude when you press
+**review**, shows you the result first, and posts a single comment headed
+`🤖 Agentic PR Reviewer` only when you press **post**.
 
-Reviews run **on demand** and stay private until you post them: a web panel lists your
-open PRs (yours and the ones you are asked to review) across one or more GitHub
-accounts, you pick a model and press **Review**, read the result in the panel, and only
-**Post** puts it on the PR — as a single comment from that account, headed
-`🤖 Agentic PR Reviewer`. Posting a later review edits the same comment.
+The review looks for what should hold a merge — a missing authorization check, a
+removed guard, a broken contract, an irreversible operation — plus comment slop
+(NICHE) and gaps between what the author claims and what the diff does (INTENT).
+Every finding quotes the diff, and the quote is checked against the diff before it is
+shown; blocking findings need a second, independent run to agree.
 
 ```
-             ┌──────────────────── pr-reviewer pod (Bun) ─────────────────────┐
- browser ───►│ panel + API (Basic auth, SSE live log)                          │
-             │ poller: every 30 s, per account, gh search                     │──► GitHub (gh CLI,
-             │   review-requested:@me / author:@me → "Open PRs" list           │     per-account token)
-             │ worker: 1 job at a time                                         │
-             │   gh pr diff → prepareDiff → claude -p (no tools) → verify      │──► Claude Code CLI
-             │   → 2nd run if blocking → result kept in the panel              │     (your subscription)
-             │ Post button: comment create/edit                                │
-             │ SQLite on a PVC: jobs, events, PR state, verdict cache          │
-             └─────────────────────────────────────────────────────────────────┘
+ browser ── Vue SPA (terminal style) ──► Hono API + SSE ─┬─► scheduler: targets → items (GitHub REST)
+                                                        ├─► worker: diff → claude -p (no tools) → verify → verdict
+                                                        ├─► publish: one marked PR comment (only on request)
+                                                        └─► SQLite on a volume: users, encrypted tokens, targets, items, reviews
 ```
 
-Details live in [`docs/`](docs/README.md); the plan for turning this into a full review system is in [`docs/plan/`](docs/plan/README.md).
+Everything is configured from the web: GitHub accounts (paste a token), Claude
+credentials (paste `claude setup-token` output), targets (GitHub searches,
+repositories, single PRs) with filters, and which credential and model each account
+uses. Tokens are stored AES-256-GCM-encrypted with a key that lives only in the
+server's environment.
+
+Details live in [`docs/`](docs/README.md); where this is going is in
+[`docs/plan/`](docs/plan/README.md).
 
 ## Requirements
 
 | What | Why |
 |---|---|
-| [Bun](https://bun.sh) 1.3+ | runtime, tests |
-| [gh](https://cli.github.com) | all GitHub access |
-| [Claude Code](https://code.claude.com) | the model; authenticated with your own Claude subscription |
+| [Bun](https://bun.sh) 1.3+ | runtime, tests, builds |
+| [Claude Code](https://code.claude.com) | the model, on your own Claude subscription |
 | Docker with buildx | building the linux/amd64 image |
-| A k3s/Kubernetes cluster | hosting (manifests in `k8s/` target k3s + Traefik + cert-manager) |
-
-## Configuration
-
-`config.json` lists the accounts; tokens never go in it:
-
-```json
-{
-  "pollIntervalSec": 30,
-  "models": ["sonnet", "opus", "haiku"],
-  "accounts": [
-    { "name": "personal", "login": "your-login", "model": "sonnet",
-      "owners": ["your-login"], "triggers": ["review_requested", "author"] }
-  ]
-}
-```
-
-Per account, from the environment (in the cluster: the `pr-reviewer-secrets` Secret):
-
-| Variable | Source |
-|---|---|
-| `GH_TOKEN_<NAME>` | `gh auth token --user <login>` |
-| `CLAUDE_TOKEN_<NAME>` | `claude setup-token` |
-
-Plus `MASTER_KEY` (`openssl rand -base64 32`, encrypts stored tokens). The first visit
-to an empty instance asks you to create the admin login; `PANEL_PASSWORD` instead
-creates it non-interactively. Full reference: [docs/configuration.md](docs/configuration.md).
+| A Kubernetes cluster | hosting (manifests in `k8s/` target k3s + Traefik + cert-manager) |
 
 ## Run locally
 
 ```bash
 bun install
-GH_TOKEN_PERSONAL=$(gh auth token --user your-login) \
-CLAUDE_TOKEN_PERSONAL=<token from claude setup-token> \
-MASTER_KEY=$(openssl rand -base64 32) \
-bun run dev                              # http://localhost:8080 → /setup on first visit
+bun run build:web
+MASTER_KEY=$(openssl rand -base64 32) bun run dev      # http://localhost:8080 → create the admin
 ```
 
-State goes to `./data` (`DATA_DIR`).
+For frontend work run `bun run dev:web` alongside (Vite on :5173, proxying `/api`).
+State goes to `./data` (`DATA_DIR`). Keep the `MASTER_KEY` you used: tokens stored
+with one key cannot be read with another.
 
 ## Deploy
 
-One-time: `cp .deploy.env.example .deploy.env` and `cp config.example.json config.json`,
-fill both in, then create the namespace and the Secret.
+One-time: `cp .deploy.env.example .deploy.env` and fill it in (ssh target, registry,
+public host), create the namespace and the master key:
 
 ```bash
 source .deploy.env && ssh "$DEPLOY_SSH" "KUBECONFIG=$KUBECONFIG_REMOTE kubectl apply -f -" < k8s/namespace.yaml
-openssl rand -base64 32 | ./scripts/set-secret.sh MASTER_KEY
-gh auth token --user your-login | ./scripts/set-secret.sh GH_TOKEN_PERSONAL
-./scripts/set-secret.sh CLAUDE_TOKEN_PERSONAL       # paste the claude setup-token output
+openssl rand -base64 32 | tee ~/.config/pr-reviewer/master-key | ./scripts/set-secret.sh MASTER_KEY
 ```
 
 Every release:
 
 ```bash
-./scripts/deploy.sh    # tests → buildx linux/amd64 → push → apply → rollout
+./scripts/deploy.sh    # tests → buildx linux/amd64 (builds the SPA inside) → push → apply → rollout
 ```
 
-`set-secret.sh KEY --restart` updates one key later and restarts the pod. The Ingress
-host comes from `PUBLIC_HOST` and needs a DNS record pointing at the cluster. See
-[docs/operations.md](docs/operations.md).
+Then open the public host, create the admin login, add accounts, credentials and
+targets. A v1 deployment (`config.json` + `GH_TOKEN_*` / `CLAUDE_TOKEN_*` env) is
+imported automatically on first start. See [docs/operations.md](docs/operations.md).
 
 ## Tests
 
 ```bash
-bun test
-bun run check     # tsc --noEmit
+bun test          # pipeline, API against an in-memory DB with fake GitHub and Claude
+bun run check     # tsc for the server, vue-tsc for the SPA
 ```
-
-## License
-
-MIT, see [LICENSE](LICENSE).
 
 ## Layout
 
 ```
 src/
-  main.ts          boot: config, DB + migrations, admin bootstrap, server, poller, worker
-  runtime.ts       shared state (db, event bus, account status, open PRs, stages)
-  config.ts        config.json + tokens from env
-  api/app.ts       Hono app: auth, CSRF, security headers, panel endpoints, SSE
+  main.ts          boot: DB + migrations, admin bootstrap, v1 import, server, scheduler, worker
+  runtime.ts       shared state and injectable deps (GitHub base URL, Claude calls)
+  api/             Hono app (auth, CSRF, headers, SSE, SPA), API v1 routes
   auth/            users (argon2id), sessions, login rate limit
-  store/           SQLite, numbered migrations, AES-GCM secrets, row types
-  events/          in-process event bus
-  scheduler/       open-PR lists per account, Claude limits probe
-  jobs/            queue (enqueue, cancel), worker (review pipeline), publish (the only GitHub write)
-  github/          gh wrapper, git diff parser, comment renderer
+  accounts/        GitHub accounts and Claude credentials: validate, store encrypted, check
+  scheduler/       target polling → items, filters, roles, auto-review, limits probe
+  jobs/            queue, worker (review pipeline), publish (the only GitHub write)
+  github/          REST client, diff parser, comment renderer
   review/          diff budget, prompt, Claude call, two-run pipeline, evidence check
   verdict/         blocking rules, finding markers
-  web/             panel, login and setup pages
-k8s/               namespace, PVC + Deployment + Service, Ingress (host from .deploy.env)
-scripts/           deploy.sh, set-secret.sh (read .deploy.env)
-tests/             bun test: pipeline, API (temp DB), store
+  store/           SQLite, migrations, repositories, AES-GCM secrets, v1 import
+web/               Vue 3 + Vite + Tailwind v4 SPA (terminal style, dark only)
+k8s/  scripts/     manifests; deploy.sh and set-secret.sh (read .deploy.env)
+tests/             bun test; tests/fakes has a fake GitHub server
 ```
+
+## License
+
+MIT, see [LICENSE](LICENSE).

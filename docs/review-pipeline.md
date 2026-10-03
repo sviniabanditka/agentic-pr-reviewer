@@ -4,7 +4,7 @@ From a PR to a posted comment.
 
 ```mermaid
 flowchart TD
-    A[gh pr diff] --> B[parseDiffOutput]
+    A[GitHub: pull diff] --> B[parseDiffOutput]
     B --> C[prepareDiff<br/>budget, lockfiles, binaries]
     C --> K{verdict cache?}
     K -->|hit| R
@@ -22,7 +22,7 @@ flowchart TD
 
 ## 1. Diff — `src/github/parse_diff.ts`, `src/review/diff.ts`
 
-`gh pr diff` returns one `git diff` text; `parseDiffOutput` splits it into files with
+The pull request diff (`application/vnd.github.diff`) is one `git diff` text; `parseDiffOutput` splits it into files with
 status, counts and patch. `prepareDiff` then parses hunks, numbering new-side lines
 from the `@@` headers.
 

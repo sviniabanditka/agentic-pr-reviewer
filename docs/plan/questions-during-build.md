@@ -17,3 +17,20 @@ what was decided for now, and what the owner should confirm.
 3. **Admin login after migration.** The deployed instance creates the first admin from
    `PANEL_PASSWORD` with login `admin` (no `PANEL_USER` was ever set). Change it in
    phase 4's user settings, or tell me another login to use.
+
+## Phase 1
+
+4. **Device flow deferred.** Adding a GitHub account is paste-a-token only, as decided;
+   the device flow waits for an OAuth App (phase 3).
+5. **No `reka-ui`.** The drawer and dialogs are small hand-written components
+   (`Drawer.vue`, inline forms) styled with the terminal tokens; a headless library
+   was not needed for a dark-only app with a handful of overlays. Say if you want it.
+6. **Search role defaults.** A search target's role is taken from the query
+   (`review-requested:@me` → review requested, `author:@me` → mine, anything else →
+   watching) unless set explicitly in the editor.
+7. **Items found by no target** become `unmatched` (still open on GitHub, but out of
+   every target's scope) and leave the default inbox view; they stay reachable under
+   state "closed / merged / unmatched".
+8. **v1 environment variables.** After the import the `GH_TOKEN_*`, `CLAUDE_TOKEN_*`
+   and `PANEL_PASSWORD` keys in the cluster Secret are unused. I left them in place so a
+   rollback to the v1 image keeps working; remove them once v2 is trusted.

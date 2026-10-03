@@ -1,92 +1,79 @@
 # Architecture
 
-One Bun process in one pod. No queue service, no database server: SQLite on a
-persistent volume holds everything.
+One Bun process in one pod: the API, the built SPA, SSE, the scheduler and the review
+worker. SQLite on a persistent volume holds everything.
 
 ## Components
 
-| Component | File | Role |
+| Component | Where | Role |
 |---|---|---|
-| Poller | `src/poller.ts` | Every `pollIntervalSec`, per account: GitHub search for open PRs, refresh head shas, publish the list to the panel. Never starts a review. |
-| Panel + API | `src/server.ts`, `src/panel.html` | Lists open PRs and past reviews, streams the log over SSE, accepts "review this PR with this model". |
-| Worker | `src/worker.ts` | Takes queued jobs one at a time: diff → review → result stored. `publishJob` posts a finished review when asked. |
-| Review pipeline | `src/review/run.ts` | Model run, evidence check, confirmation run for blocking findings, verdict. |
-| Claude call | `src/review/claude.ts` | `claude -p` with no tools and a JSON schema. |
-| GitHub access | `src/github/gh.ts` | Every call through the `gh` CLI with the account's token. |
-| Event log | `src/log.ts` | Each line stored in SQLite and pushed to every open panel. |
+| API | `src/api/app.ts`, `src/api/routes.ts` | Hono: sessions, CSRF, security headers, API v1, SSE, serves `web/dist` |
+| Auth | `src/auth/auth.ts` | argon2id passwords, session cookies (sha256 in the DB), login rate limit |
+| Accounts | `src/accounts/service.ts` | Validates GitHub tokens (`GET /user`) and Claude tokens (probe), stores them encrypted, re-checks |
+| Scheduler | `src/scheduler/targets.ts` | Every 5 s polls due targets; upserts items; releases items no longer matched; auto-review; probes Claude limits every 30 min |
+| Worker | `src/jobs/worker.ts` | One job at a time: PR details and diff → review pipeline → stored result |
+| Publish | `src/jobs/publish.ts` | Creates or edits the marked PR comment. The only code path that writes to GitHub |
+| GitHub client | `src/github/client.ts` | REST over `fetch` per account token; rate-limit headers, pagination, diff media type |
+| Engine | `src/review/*`, `src/verdict/*` | See [review-pipeline.md](review-pipeline.md) |
+| Web | `web/` | Vue 3 SPA: overview, inbox, PR page, review drawer, targets, accounts, activity, settings |
+
+## Data model
+
+| Table | Holds |
+|---|---|
+| `users`, `sessions` | Logins (admin/member) and sessions |
+| `secrets` | AES-256-GCM ciphertexts; additional data binds each to its row id |
+| `accounts` | A GitHub identity of a user: login, label, token (→ `secrets`), scopes, attached credential, default model, health |
+| `credentials` | A Claude subscription token (→ `secrets`), label, health, last usage windows |
+| `targets` | What to watch: `search` (qualifiers), `repo`, `pr`; filters (drafts, bots, labels, authors, owners, size), role, automation (`manual` / `auto-review`), model, poll interval, last error |
+| `items` | A PR found by one or more targets: head/base sha, state (`open`, `closed`, `merged`, `unmatched`, `archived`), role, labels, size, the comment id |
+| `jobs` | A review: item, account, model, status, verdict, counts, usage, full result JSON, comment URL once posted |
+| `events` | The activity log (14 days) |
+| `settings` | Instance settings (models) and the v1-import flag |
+| `cache` | Verdicts by prompt version + model + diff + intent (24 h) |
+
+Every owner-scoped row carries `user_id`, and every API query filters by the
+session's user: users never see each other's accounts, items or reviews.
 
 ## Life of a review
 
 ```mermaid
 sequenceDiagram
-    participant P as Poller
-    participant GH as GitHub (gh)
-    participant UI as Panel
+    participant S as Scheduler
+    participant GH as GitHub REST
+    participant UI as Web app
     participant W as Worker
     participant C as claude -p
 
-    loop every 30 s, per account
-        P->>GH: search review-requested:@me, author:@me
-        P->>GH: pr view (only PRs whose updated_at changed)
-        P-->>UI: SSE "prs"
+    loop every target's interval
+        S->>GH: search / list pulls / get pull
+        S->>GH: pull details (only when updated_at changed)
+        S-->>UI: SSE prs, status
     end
-    UI->>W: POST /api/review {account, repo, number, model}
-    Note over W: job queued, SSE "job"
-    W->>GH: pr view, pr diff
-    W->>W: prepareDiff, cache lookup
-    W->>C: review run (retried when inconclusive)
-    opt blocking candidates
-        W->>C: confirmation run
-    end
-    W-->>UI: SSE "job" (done / error), "log" lines throughout
-    UI->>W: POST /api/jobs/:id/publish (Post, clicked twice)
+    UI->>W: POST /api/v1/reviews {itemId, model}
+    W->>GH: pull details, diff
+    W->>C: review run (+ confirmation run if blocking)
+    W-->>UI: SSE job, stage, log
+    UI->>W: POST /api/v1/reviews/:id/publish (second click confirms)
     W->>GH: create or edit the marked comment
 ```
 
-Design choices:
-
-- **On demand only, private until posted.** The poller keeps the list fresh; nothing is
-  reviewed until someone presses Review, and nothing reaches GitHub until someone
-  presses Post (a second click confirms, since it writes under their name).
-  `publishJob` is the only code path that writes to GitHub. An account can list PRs
-  without a Claude token — only its Review button stays disabled.
-- **Only listed PRs can be reviewed.** `enqueueReview` accepts a PR only if it is in
-  the latest poll result of that account, so the panel cannot be used to post
-  comments in arbitrary repositories.
-- **One comment per PR and account.** Found by a hidden marker
-  (`<!-- agentic-pr-reviewer -->`) plus the author login, then edited. Never "the
-  user's last comment", which may be one written by hand. Posting a review clears
-  `comment_url` on the earlier reviews of that PR, so the panel shows which review the
-  comment currently holds.
-- **One job at a time.** The Claude subscription limit is the bottleneck, not CPU.
-- **Restart-safe.** A job left `running` by a restart goes back to `queued`; nothing
-  was published for it.
-
-## State
-
-SQLite at `$DATA_DIR/reviewer.sqlite` (`src/db.ts`):
-
-| Table | Holds | Kept |
-|---|---|---|
-| `jobs` | one row per requested review: status, verdict, counts, tokens, model, full result JSON, and the comment URL once posted | forever |
-| `events` | log lines, optionally tied to a job | 14 days |
-| `prs` | last seen `updated_at` and head sha per account + PR, the comment id | forever |
-| `cache` | verdict by hash of prompt version + model + rendered diff + intent | 24 h |
-
-`$DATA_DIR/claude/<account>` is each account's Claude Code config dir, so two
-accounts never share local Claude state.
+- **Explicit by default.** Targets list PRs. A review starts on **review** (or on a
+  new head sha for an `auto-review` target); a comment is written only on **post**.
+- **Only known PRs can be reviewed.** A review is queued for an item, and items exist
+  only because a target found them or the user added them by URL.
+- **One comment per PR and account**, found by marker and author login, edited on
+  repost; posting clears `comment_url` on earlier reviews of that PR.
+- **Restart-safe.** A job left running goes back to the queue; nothing was posted.
 
 ## Security boundaries
 
-- **The model sees only text.** `claude -p --tools ""`: untrusted PR content cannot
-  make it read files, run commands or reach the network. The prompt also tells it
-  that PR text is data, not instructions.
-- **Tokens stay out of the model process.** `claude` gets a fresh env with only its
-  own OAuth token; `gh` gets only the GitHub token of the account it acts for.
-- **A token for the wrong login disables the account.** On start each GitHub token
-  is checked with `gh api user`.
-- **The panel** requires HTTP Basic auth. POSTs must be JSON and same-origin, which
-  stops other sites from triggering reviews through the browser's saved credentials.
-- **Posted text is model output.** A hostile PR could still steer what the comment
-  says; findings whose quoted evidence is not in the diff are demoted to a collapsed
-  "Low confidence" section and never block.
+- The model sees only text: `claude -p --tools ""`, environment built from scratch with
+  just the credential's token. GitHub tokens never reach it.
+- Tokens are decrypted only for the call that needs them; the API returns a
+  fingerprint (`…abcd`), never a token or a secret id.
+- Sessions: HttpOnly, Secure (behind HTTPS), SameSite=Strict; mutations need the
+  same origin plus `x-requested-with: fetch`; CSP `default-src 'self'` (fonts are
+  bundled).
+- A token whose login changed marks the account `invalid` instead of acting under the
+  wrong name.

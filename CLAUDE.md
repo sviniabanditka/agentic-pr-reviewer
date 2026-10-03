@@ -1,15 +1,18 @@
 # Agentic PR Reviewer
 
-On-demand AI review of GitHub PRs: a Bun daemon in k3s with a web panel. The poller
-only lists open PRs; a review runs when someone presses Review in the panel, via
-`claude -p` (no tools) and `gh`; the result stays in the panel until Post puts it on the
-PR as one comment per account.
+On-demand AI review of GitHub PRs: a Bun server (Hono + SQLite) with a Vue SPA in
+`web/`, deployed to k3s. Accounts, Claude credentials and targets live in the
+database (tokens AES-GCM-encrypted with `MASTER_KEY`). Targets only list PRs; a
+review runs on a press (or on new commits for an `auto-review` target) via
+`claude -p` (no tools); the result stays in the app until Post puts it on the PR as
+one comment per account.
 
 ## Run and test
 
 ```
 bun test
-bun run check
+bun run check        # tsc + vue-tsc
+bun run build:web    # before running the server locally
 ```
 
 ## Deploy
@@ -24,9 +27,10 @@ Secrets only through `./scripts/set-secret.sh KEY [--restart]`; never put tokens
 
 ## Rules that are easy to break
 
-- Nothing reaches GitHub without an explicit Post press: the poller never enqueues,
-  the worker never comments, `publishJob` (`POST /api/jobs/:id/publish`) is the only
-  writer.
+- Nothing reaches GitHub without an explicit Post press: the worker never comments,
+  `publishJob` (`POST /api/v1/reviews/:id/publish`) is the only writer. The scheduler
+  enqueues only for targets the user set to `auto-review`.
+- Every owner-scoped query filters by `user_id`; API tests check cross-user access.
 - `claude` runs with `--tools ""` and a from-scratch env; GitHub tokens must never
   reach it.
 - Changing the prompt or the finding schema requires bumping `PROMPT_VERSION`

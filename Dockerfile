@@ -1,12 +1,15 @@
-FROM oven/bun:1-debian
+# ── web: build the SPA ──────────────────────────────────────────
+FROM oven/bun:1-debian AS web
+WORKDIR /build
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
+COPY web ./web
+RUN bun run build:web
 
-# gh: GitHub access. Its apt repo is the install path the gh project documents.
+# ── runtime ─────────────────────────────────────────────────────
+FROM oven/bun:1-debian
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates \
- && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
- && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
- && apt-get update \
- && apt-get install -y --no-install-recommends gh \
  && rm -rf /var/lib/apt/lists/*
 
 USER bun
@@ -22,6 +25,7 @@ WORKDIR /app
 COPY --chown=bun package.json bun.lock ./
 RUN bun install --production --frozen-lockfile
 COPY --chown=bun src ./src
+COPY --chown=bun --from=web /build/web/dist ./web/dist
 
 EXPOSE 8080
 CMD ["bun", "src/main.ts"]
