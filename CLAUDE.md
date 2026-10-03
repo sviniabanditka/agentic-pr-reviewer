@@ -14,8 +14,11 @@ bun run check
 
 ## Deploy
 
-`./scripts/deploy.sh` — tests, buildx `linux/amd64`, push to
-`registry.sviniabanditka.com`, apply `k8s/` over ssh (`~/.ssh/tracker_ci`), rollout.
+`./scripts/deploy.sh` — tests, buildx `linux/amd64`, push, apply `k8s/` over ssh,
+rollout; all hosts and keys come from `.deploy.env` (git-ignored). Back up the
+database before deploying a new migration:
+`kubectl -n pr-reviewer exec deploy/pr-reviewer -- cat /data/reviewer.sqlite > backup.sqlite`
+(stop writes first or accept a WAL-consistent copy via `sqlite3 .backup` if available).
 Secrets only through `./scripts/set-secret.sh KEY [--restart]`; never put tokens in
 `config.json`, manifests or command lines.
 

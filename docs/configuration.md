@@ -4,6 +4,7 @@
 
 Read from `CONFIG_PATH` (default `./config.json`; `/config/config.json` in the image,
 mounted from the `pr-reviewer-config` ConfigMap that `scripts/deploy.sh` generates).
+`config.json` is git-ignored; start from `config.example.json`.
 Validated on start; an invalid file stops the process with the failing path.
 
 ```json
@@ -33,8 +34,8 @@ Validated on start; an invalid file stops the process with the failing path.
 |---|---|---|
 | `GH_TOKEN_<NAME>` | — | GitHub token of account `<NAME>` (upper-cased, non-alphanumerics → `_`). Required. `gh auth token --user <login>` prints the token `gh` holds (scopes `repo`, `read:org`, `gist`). |
 | `CLAUDE_TOKEN_<NAME>` | — | Output of `claude setup-token` for the Claude subscription that pays for this account's reviews. Without it the account's PRs are listed but cannot be reviewed. |
-| `PANEL_PASSWORD` | — | Basic auth password. Unset = no auth (local only). |
-| `PANEL_USER` | `admin` | Basic auth user. |
+| `MASTER_KEY` | — | 32 random bytes, base64 (`openssl rand -base64 32`). Encrypts tokens stored in the database. Losing it means re-entering every stored token. |
+| `PANEL_PASSWORD` / `PANEL_USER` | — / `admin` | Only read on an instance with no users: creates the first admin with this login and password (how v1 deployments migrate). Without it the first visit shows a setup page. Can be removed afterwards. |
 | `DATA_DIR` | `data` (`/data` in the image) | SQLite file and per-account Claude config dirs. |
 | `CONFIG_PATH` | `config.json` | See above. |
 | `PORT` | `8080` | HTTP port. |

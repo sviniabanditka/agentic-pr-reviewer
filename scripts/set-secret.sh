@@ -3,9 +3,11 @@
 # Sets one key of the pr-reviewer-secrets Secret. The value is read from stdin
 # (or typed hidden on a terminal) and travels over ssh stdin, never in argv.
 set -euo pipefail
+cd "$(dirname "$0")/.."
+set -a; source .deploy.env; set +a
 KEY=${1:?usage: scripts/set-secret.sh KEY [--restart]}
-SSH=(ssh -i "${SSH_KEY:-$HOME/.ssh/tracker_ci}" root@ssh.sviniabanditka.com)
-K="KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl -n pr-reviewer"
+SSH=(ssh -i "${DEPLOY_SSH_KEY/#\~/$HOME}" "$DEPLOY_SSH")
+K="KUBECONFIG=$KUBECONFIG_REMOTE kubectl -n $NAMESPACE"
 
 if [ -t 0 ]; then read -rsp "$KEY: " VALUE; echo; else VALUE=$(cat); fi
 [ -n "$VALUE" ] || { echo "empty value" >&2; exit 1; }

@@ -1,8 +1,0 @@
-{
-  "pollIntervalSec": 30,
-  "models": ["sonnet", "opus", "haiku"],
-  "accounts": [
-    { "name": "personal", "login": "sviniabanditka", "model": "sonnet", "owners": ["sviniabanditka"], "triggers": ["review_requested", "author"] },
-    { "name": "work", "login": "ksivenkov96", "model": "sonnet", "owners": ["HealthMotivate-Digital"], "triggers": ["review_requested", "author"] }
-  ]
-}

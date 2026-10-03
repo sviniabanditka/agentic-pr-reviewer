@@ -1,12 +1,24 @@
 # Panel HTTP API
 
-Served by `src/server.ts` on `PORT` (8080). Everything except `/healthz` requires HTTP
-Basic auth (`PANEL_USER` / `PANEL_PASSWORD`). When `PANEL_PASSWORD` is unset the panel
-is open — local development only.
+Served by `src/api/app.ts` (Hono) on `PORT` (8080). Everything except `/healthz`,
+`/login`, `/setup` and the auth endpoints below requires a session cookie
+(`apr_session`, HttpOnly, SameSite=Strict, Secure behind HTTPS; 30 days absolute,
+7 days idle). Pages redirect to `/login` (or `/setup` on an empty instance); API calls
+answer `401`.
 
-POST requests must send `content-type: application/json`, and a request with an
-`Origin` header from another host is refused with `403`. This keeps other sites from
-triggering reviews through the browser's saved Basic credentials.
+Every non-GET request must send `x-requested-with: fetch`, and a request with an
+`Origin` from another host is refused with `403`: a form on another site can carry the
+cookie but cannot set that header.
+
+## Auth
+
+| Endpoint | Body | Notes |
+|---|---|---|
+| `GET /api/v1/setup` | — | `{needsSetup}` |
+| `POST /api/v1/setup` | `{login, password}` | Only while no user exists; creates the admin and signs in. Password ≥ 10 characters. |
+| `POST /api/v1/auth/login` | `{login, password}` | Sets the session cookie. 10 failures per IP or login in 15 minutes → `429`. |
+| `POST /api/v1/auth/logout` | — | Deletes the session. |
+| `GET /api/v1/auth/me` | — | `{user: {id, login, role}}` |
 
 ## `GET /healthz`
 

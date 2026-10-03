@@ -34,8 +34,6 @@ export interface Config {
   models: string[];
   dataDir: string;
   port: number;
-  panelUser: string;
-  panelPassword?: string;
   accounts: Account[];
 }
 
@@ -71,8 +69,6 @@ export async function loadConfig(env: Record<string, string | undefined> = proce
     models,
     dataDir: env.DATA_DIR ?? "data",
     port: Number(env.PORT ?? 8080),
-    panelUser: env.PANEL_USER ?? "admin",
-    ...(env.PANEL_PASSWORD ? { panelPassword: env.PANEL_PASSWORD } : {}),
     accounts,
   };
 }

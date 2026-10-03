@@ -58,8 +58,9 @@ Per account, from the environment (in the cluster: the `pr-reviewer-secrets` Sec
 | `GH_TOKEN_<NAME>` | `gh auth token --user <login>` |
 | `CLAUDE_TOKEN_<NAME>` | `claude setup-token` |
 
-Plus `PANEL_PASSWORD` (required outside local dev) and optionally `PANEL_USER` (default
-`admin`). Full reference: [docs/configuration.md](docs/configuration.md).
+Plus `MASTER_KEY` (`openssl rand -base64 32`, encrypts stored tokens). The first visit
+to an empty instance asks you to create the admin login; `PANEL_PASSWORD` instead
+creates it non-interactively. Full reference: [docs/configuration.md](docs/configuration.md).
 
 ## Run locally
 
@@ -67,20 +68,22 @@ Plus `PANEL_PASSWORD` (required outside local dev) and optionally `PANEL_USER` (
 bun install
 GH_TOKEN_PERSONAL=$(gh auth token --user your-login) \
 CLAUDE_TOKEN_PERSONAL=<token from claude setup-token> \
-PANEL_PASSWORD=dev bun run dev          # http://localhost:8080, user admin
+MASTER_KEY=$(openssl rand -base64 32) \
+bun run dev                              # http://localhost:8080 → /setup on first visit
 ```
 
 State goes to `./data` (`DATA_DIR`).
 
 ## Deploy
 
-One-time: create the namespace and the Secret.
+One-time: `cp .deploy.env.example .deploy.env` and `cp config.example.json config.json`,
+fill both in, then create the namespace and the Secret.
 
 ```bash
-ssh root@<node> "KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl apply -f -" < k8s/namespace.yaml
+source .deploy.env && ssh "$DEPLOY_SSH" "KUBECONFIG=$KUBECONFIG_REMOTE kubectl apply -f -" < k8s/namespace.yaml
+openssl rand -base64 32 | ./scripts/set-secret.sh MASTER_KEY
 gh auth token --user your-login | ./scripts/set-secret.sh GH_TOKEN_PERSONAL
 ./scripts/set-secret.sh CLAUDE_TOKEN_PERSONAL       # paste the claude setup-token output
-./scripts/set-secret.sh PANEL_PASSWORD
 ```
 
 Every release:
@@ -89,10 +92,8 @@ Every release:
 ./scripts/deploy.sh    # tests → buildx linux/amd64 → push → apply → rollout
 ```
 
-`set-secret.sh KEY --restart` updates one key later and restarts the pod. The scripts
-default to this project's cluster (`ssh.sviniabanditka.com`, key `~/.ssh/tracker_ci`,
-registry `registry.sviniabanditka.com`); change them for another one. The Ingress host
-(`k8s/ingress.yaml`) needs a DNS record pointing at the cluster. See
+`set-secret.sh KEY --restart` updates one key later and restarts the pod. The Ingress
+host comes from `PUBLIC_HOST` and needs a DNS record pointing at the cluster. See
 [docs/operations.md](docs/operations.md).
 
 ## Tests
@@ -102,22 +103,28 @@ bun test
 bun run check     # tsc --noEmit
 ```
 
+## License
+
+MIT, see [LICENSE](LICENSE).
+
 ## Layout
 
 ```
 src/
-  main.ts          entry point: config, DB, token checks, server, poller, worker
+  main.ts          boot: config, DB + migrations, admin bootstrap, server, poller, worker
+  runtime.ts       shared state (db, event bus, account status, open PRs, stages)
   config.ts        config.json + tokens from env
-  db.ts            SQLite schema (bun:sqlite)
-  log.ts           event log: persisted, broadcast to open panels
-  poller.ts        open-PR lists per account, enqueueing from the panel
-  worker.ts        job loop: diff → review → stored result; publishJob posts on request
-  server.ts        panel, JSON API, SSE stream, Basic auth
-  panel.html       the web panel (no build step)
+  api/app.ts       Hono app: auth, CSRF, security headers, panel endpoints, SSE
+  auth/            users (argon2id), sessions, login rate limit
+  store/           SQLite, numbered migrations, AES-GCM secrets, row types
+  events/          in-process event bus
+  scheduler/       open-PR lists per account, Claude limits probe
+  jobs/            queue (enqueue, cancel), worker (review pipeline), publish (the only GitHub write)
   github/          gh wrapper, git diff parser, comment renderer
   review/          diff budget, prompt, Claude call, two-run pipeline, evidence check
   verdict/         blocking rules, finding markers
-k8s/               namespace, PVC + Deployment + Service, Ingress
-scripts/           deploy.sh, set-secret.sh
-tests/             bun test
+  web/             panel, login and setup pages
+k8s/               namespace, PVC + Deployment + Service, Ingress (host from .deploy.env)
+scripts/           deploy.sh, set-secret.sh (read .deploy.env)
+tests/             bun test: pipeline, API (temp DB), store
 ```

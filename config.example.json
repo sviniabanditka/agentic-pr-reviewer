@@ -1,0 +1,7 @@
+{
+  "pollIntervalSec": 30,
+  "models": ["sonnet", "opus", "haiku"],
+  "accounts": [
+    { "name": "personal", "login": "your-github-login", "model": "sonnet", "owners": ["your-github-login"], "triggers": ["review_requested", "author"] }
+  ]
+}

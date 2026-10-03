@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Set up · Agentic PR Reviewer</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #0b0c12; color: #c5cae0;
+    font: 14px/1.6 ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, monospace; }
+  main { width: min(420px, calc(100vw - 32px)); background: #0f1117; border: 1px solid #20222e; border-radius: 12px; padding: 28px; }
+  h1 { margin: 0 0 4px; font-size: 15px; color: #eef0fa; font-weight: 600; }
+  h1 .p { color: #9ece6a; }
+  p.sub { margin: 0 0 22px; color: #8b91a8; }
+  label { display: block; color: #aab0c7; margin: 14px 0 6px; }
+  input { width: 100%; background: #16171f; border: 1px solid #20222e; border-radius: 8px; padding: 9px 11px; color: #eef0fa; font: inherit; caret-color: #9ece6a; outline: none; }
+  input:focus { border-color: #2f3344; }
+  button { margin-top: 22px; background: none; border: 0; padding: 0; font: inherit; color: #7aa2f7; cursor: pointer; }
+  button .b { color: #8b91a8; }
+  button:disabled { opacity: .5; cursor: default; }
+  button:focus-visible { outline: 2px solid #7aa2f7; outline-offset: 3px; border-radius: 4px; }
+  .err { margin-top: 14px; color: #f7768e; min-height: 1.6em; }
+  .hint { color: #565f89; margin-top: 18px; }
+</style>
+</head>
+<body>
+<main>
+  <h1><span class="p">$</span> agentic-pr-reviewer setup</h1>
+  <p class="sub">// first run: create the admin account</p>
+  <form id="f">
+    <label for="login">login</label>
+    <input id="login" name="login" autocomplete="username" required autofocus>
+    <label for="password">password</label>
+    <input id="password" name="password" type="password" autocomplete="new-password" required minlength="10">
+    <button type="submit"><span class="b">[</span> create admin <span class="b">]</span></button>
+    <div class="err" id="err" role="alert"></div>
+  </form>
+  <p class="hint">// at least 10 characters. this page disappears once an admin exists.</p>
+</main>
+<script>
+const f = document.getElementById("f"), err = document.getElementById("err");
+f.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  err.textContent = "";
+  const btn = f.querySelector("button"); btn.disabled = true;
+  try {
+    const r = await fetch("/api/v1/setup", { method: "POST", headers: { "content-type": "application/json", "x-requested-with": "fetch" },
+      body: JSON.stringify({ login: f.login.value.trim(), password: f.password.value }) });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || "HTTP " + r.status);
+    const next = new URLSearchParams(location.search).get("next");
+    location.href = next && next.startsWith("/") && !next.startsWith("//") ? next : "/";
+  } catch (e) { err.textContent = "! " + e.message; btn.disabled = false; }
+});
+</script>
+</body>
+</html>

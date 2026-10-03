@@ -17,6 +17,9 @@ Image: `registry.sviniabanditka.com/agentic-pr-reviewer:<yyyymmdd-hhmmss>`, buil
 
 ## Deploying
 
+Settings live in `.deploy.env` (git-ignored; copy `.deploy.env.example`): ssh target
+and key, kubeconfig path, namespace, registry, image name, public host.
+
 ```bash
 ./scripts/deploy.sh
 ```
@@ -39,7 +42,8 @@ never on a command line. `--restart` rolls the pod so it picks the value up.
 |---|---|
 | `GH_TOKEN_<NAME>` | `gh auth token --user <login> \| ./scripts/set-secret.sh GH_TOKEN_<NAME>` |
 | `CLAUDE_TOKEN_<NAME>` | run `claude setup-token` with the right Claude account (e.g. `claude-p` / `claude-c`), then paste into `set-secret.sh` |
-| `PANEL_PASSWORD` | any; the current one is kept locally in `~/.config/pr-reviewer/panel-password` |
+| `MASTER_KEY` | `openssl rand -base64 32`; keep a copy (the deployed one is in `~/.config/pr-reviewer/master-key`) |
+| `PANEL_PASSWORD` | only used to create the first admin on an empty instance (login `PANEL_USER`, default `admin`) |
 
 Removing a key:
 
@@ -60,7 +64,8 @@ error).
 
 ## The panel
 
-https://review.sviniabanditka.com — Basic auth.
+The configured public host — sign in with the admin login (on a migrated v1 instance:
+`admin` with the old panel password).
 
 - **Accounts**: Claude 5-hour and 7-day usage with reset times, GitHub API quota, last
   sync, open-PR count, and what is wrong when something is. **Check limits** re-reads
