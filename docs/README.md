@@ -8,5 +8,6 @@
 | [configuration.md](configuration.md) | `config.json`, environment variables, constants in code |
 | [operations.md](operations.md) | Deploying, secrets, the panel, logs, troubleshooting, known limits |
 | [development.md](development.md) | Commands, tests, what to update after a change |
+| [plan/](plan/README.md) | Where this is going: assessment, vision, target architecture, specs, security, roadmap (draft, not built) |
 
 Getting started is in the root [README](../README.md).

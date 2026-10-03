@@ -24,7 +24,7 @@ accounts, you pick a model and press **Review**, read the result in the panel, a
              └─────────────────────────────────────────────────────────────────┘
 ```
 
-Details live in [`docs/`](docs/README.md).
+Details live in [`docs/`](docs/README.md); the plan for turning this into a full review system is in [`docs/plan/`](docs/plan/README.md).
 
 ## Requirements
 
