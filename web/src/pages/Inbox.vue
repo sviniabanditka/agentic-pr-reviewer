@@ -19,7 +19,7 @@ import { toast } from "../components/toast";
 
 const route = useRoute();
 const router = useRouter();
-type View = "needs" | "running" | "done" | "all";
+type View = "needs" | "running" | "done" | "all" | "history";
 const view = ref<View>((route.query.view as View) ?? "needs");
 const accountId = ref(String(route.query.account ?? ""));
 const role = ref(String(route.query.role ?? ""));
@@ -29,7 +29,7 @@ watch([view, accountId, role, repo], () => router.replace({ query: {
 } }));
 
 const moved = (i: Item) => i.lastReview?.status === "done" && !!i.headSha && i.lastReview.head_sha !== i.headSha;
-function bucket(i: Item): Exclude<View, "all"> {
+function bucket(i: Item): Exclude<View, "all" | "history"> {
   const r = i.lastReview;
   if (r && (r.status === "queued" || r.status === "running")) return "running";
   if (i.state !== "open") return "done";
@@ -41,15 +41,21 @@ const base = computed(() => [...store.items.values()]
   .filter((i) => !accountId.value || i.accountId === accountId.value)
   .filter((i) => !role.value || (role.value === "review" ? i.role.includes("review") : role.value === "mine" ? i.role.startsWith("author") : i.role === "watching"))
   .filter((i) => !repo.value || i.repo === repo.value));
+// History: every review ever run, newest first, closed and merged pull requests included.
+const reviews = computed(() => [...store.reviews.values()]
+  .filter((r) => !accountId.value || r.account_id === accountId.value)
+  .filter((r) => !role.value || (role.value === "review" ? r.role.includes("review") : role.value === "mine" ? r.role.startsWith("author") : r.role === "watching"))
+  .filter((r) => !repo.value || r.repo === repo.value)
+  .sort((a, b) => b.id - a.id));
 const counts = computed(() => {
-  const c = { needs: 0, running: 0, done: 0, all: base.value.length };
+  const c = { needs: 0, running: 0, done: 0, all: base.value.length, history: reviews.value.length };
   for (const i of base.value) c[bucket(i)]++;
   return c;
 });
 const items = computed(() => base.value
-  .filter((i) => view.value === "all" || bucket(i) === view.value)
+  .filter((i) => view.value === "all" || (view.value !== "history" && bucket(i) === view.value))
   .sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "")));
-const repos = computed(() => [...new Set([...store.items.values()].map((i) => i.repo))].sort());
+const repos = computed(() => [...new Set([...store.items.values()].map((i) => i.repo).concat([...store.reviews.values()].map((r) => r.repo)))].sort());
 
 const selected = computed<Item | undefined>(() => {
   if (route.query.item) return store.items.get(String(route.query.item));
@@ -57,12 +63,17 @@ const selected = computed<Item | undefined>(() => {
     const r = store.reviews.get(Number(route.query.review));
     if (r?.item_id) return store.items.get(r.item_id);
   }
+  if (view.value === "history") {
+    const r = reviews.value[0];
+    return r?.item_id ? store.items.get(r.item_id) : undefined;
+  }
   return items.value[0];
 });
-const reviewId = computed(() => (route.query.review ? Number(route.query.review) : selected.value?.lastReview?.id ?? null));
+const reviewId = computed(() => (route.query.review ? Number(route.query.review) : view.value === "history" && !route.query.item ? reviews.value[0]?.id ?? null : selected.value?.lastReview?.id ?? null));
 const history = computed(() => (selected.value ? [...store.reviews.values()].filter((r) => r.item_id === selected.value!.id).sort((a, b) => b.id - a.id) : []));
 const select = (i: Item) => router.push({ query: { ...route.query, item: i.id, review: undefined } });
 const showReview = (id: number) => router.push({ query: { ...route.query, review: String(id) } });
+const openHistory = (id: number, itemId: string | null) => router.push({ query: { ...route.query, review: String(id), item: itemId ?? undefined, fresh: undefined } });
 const newReview = () => selected.value && router.push({ query: { ...route.query, item: selected.value.id, review: undefined, fresh: "1" } });
 
 function rowTone(i: Item) {
@@ -84,7 +95,7 @@ async function archive(i: Item, back = false) {
     toast((e as Error).message, true);
   }
 }
-const chips: { id: View; label: string }[] = [{ id: "needs", label: "Needs me" }, { id: "running", label: "Running" }, { id: "done", label: "Done" }, { id: "all", label: "All" }];
+const chips: { id: View; label: string }[] = [{ id: "needs", label: "Needs me" }, { id: "running", label: "Running" }, { id: "done", label: "Done" }, { id: "all", label: "All" }, { id: "history", label: "History" }];
 </script>
 
 <template>
@@ -110,7 +121,24 @@ const chips: { id: View; label: string }[] = [{ id: "needs", label: "Needs me" }
         <select v-model="repo" class="field w-auto max-w-44 py-1 text-[12.5px]" aria-label="Repository"><option value="">All repositories</option><option v-for="r in repos" :key="r" :value="r">{{ r.split("/")[1] }}</option></select>
         <TBtn class="ml-auto" tone="ghost" size="sm" :busy="refreshing" @click="refresh">Refresh</TBtn>
       </div>
-      <ul class="m-0 flex-1 list-none p-0 py-2">
+      <ul v-if="view === 'history'" class="m-0 flex-1 list-none p-0 py-2">
+        <li v-for="r in reviews.slice(0, 300)" :key="r.id">
+          <button class="mx-2 mb-0.5 block w-[calc(100%-16px)] cursor-pointer rounded-[10px] px-3.5 py-2.5 text-left" :class="reviewId === r.id ? 'bg-hover' : 'hover:bg-[#1b1c21]'" @click="openHistory(r.id, r.item_id)">
+            <span class="flex items-center gap-2.5">
+              <span class="min-w-0 flex-1 truncate text-bright">{{ r.title }}</span>
+              <span class="chip" :style="{ color: reviewTone(r).fg, background: reviewTone(r).bg }">{{ reviewTone(r).label }}</span>
+            </span>
+            <span class="mt-1 flex items-center gap-2 text-xs text-tertiary">
+              <span>{{ itemName({ ...r, kind: r.item_id ? store.items.get(r.item_id)?.kind : "pr" }) }}</span><span class="text-faint">·</span>
+              <span class="font-mono">{{ sha7(r.head_sha) }}</span><span class="text-faint">·</span><span>{{ r.model ?? "" }}</span>
+              <span v-if="r.kind === 'incremental'" class="text-faint">· new commits</span>
+              <span class="ml-auto shrink-0"><Rel :ts="r.created_at" /></span>
+            </span>
+          </button>
+        </li>
+        <li v-if="!reviews.length" class="px-6 py-10 text-center text-[13px] text-tertiary">No reviews yet.</li>
+      </ul>
+      <ul v-else class="m-0 flex-1 list-none p-0 py-2">
         <li v-for="i in items" :key="i.id">
           <button class="mx-2 mb-0.5 block w-[calc(100%-16px)] cursor-pointer rounded-[10px] px-3.5 py-2.5 text-left" :class="selected?.id === i.id ? 'bg-hover' : 'hover:bg-[#1b1c21]'" @click="select(i)">
             <span class="flex items-center gap-2.5">
@@ -136,7 +164,8 @@ const chips: { id: View; label: string }[] = [{ id: "needs", label: "Needs me" }
     </section>
 
     <div class="min-w-0 flex-[999_1_560px]">
-      <template v-if="selected">
+      <ReviewPanel v-if="!selected && reviewId" :review-id="reviewId" />
+      <template v-else-if="selected">
         <ReviewPanel v-if="reviewId && !route.query.fresh" :review-id="reviewId">
           <template #actions>
             <Menu width="300px">

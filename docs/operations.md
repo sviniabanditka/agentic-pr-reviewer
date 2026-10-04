@@ -93,7 +93,7 @@ The rail on the left: Inbox, Targets, Profiles, Accounts, Activity, Admin (admin
 
 | Page | For |
 |---|---|
-| inbox | Pull requests from your targets with status chips (Needs me / Running / Done / All) and filters; the selected one opens on the right: its review (findings, runs, log, compare), **Post to PR** with a choice of comment or inline review (two clicks), review again, export, history, archive. **+ Add** takes a PR link, a compare range or a pasted patch |
+| inbox | Pull requests from your targets with status chips (Needs me / Running / Done / All / History — every review, newest first, closed PRs included) and filters; the selected one opens on the right: its review (findings, runs, log, compare), **Post to PR** with a choice of comment or inline review (two clicks), review again, export, history, archive. **+ Add** takes a PR link, a compare range or a pasted patch |
 | targets | List with on/off switches; editor with presets, filters, what to do on a new commit (list / review / review and post) and a preview of matches |
 | profiles | Review recipes: mode, model, categories and which block, confirmation, budget, instructions; prompt preview on a real PR |
 | accounts | GitHub accounts (token or GitHub sign-in, Claude credential, default model and profile, quota) and Claude credentials (5-hour and 7-day usage) |
