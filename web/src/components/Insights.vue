@@ -1,11 +1,9 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
-import { api } from "../api";
+import { computed } from "vue";
 import { dur } from "../format";
 import TBar from "./TBar.vue";
-import { toast } from "./toast";
 
-interface Data {
+export interface InsightsData {
   days: number;
   byModel: { model: string; reviews: number; runs: number; avg_ms: number; tokens_in: number; tokens_out: number; cost_usd: number; blocking_reviews: number }[];
   byProfile: { profile: string; reviews: number; avg_ms: number; cost_usd: number }[];
@@ -14,67 +12,48 @@ interface Data {
   posted: number;
   confirmation: { confirmations: number; agreed: number | null };
 }
-const days = ref(7);
-const data = ref<Data | null>(null);
-watch(days, async (d) => {
-  try {
-    data.value = await api.get<Data>(`/insights?days=${d}`);
-  } catch (e) {
-    toast((e as Error).message, true);
-  }
-}, { immediate: true });
-const cats = computed(() => Object.entries(data.value?.categories ?? {}).sort((a, b) => b[1] - a[1]));
+const props = defineProps<{ data: InsightsData }>();
+const cats = computed(() => Object.entries(props.data.categories).sort((a, b) => b[1] - a[1]));
 const catMax = computed(() => Math.max(1, ...cats.value.map(([, n]) => n)));
-const dayMax = computed(() => Math.max(1, ...(data.value?.byDay ?? []).map((d) => d.reviews)));
-const total = computed(() => (data.value?.byModel ?? []).reduce((t, m) => ({ reviews: t.reviews + m.reviews, cost: t.cost + m.cost_usd }), { reviews: 0, cost: 0 }));
+const dayMax = computed(() => Math.max(1, ...props.data.byDay.map((d) => d.reviews)));
 </script>
 
 <template>
-  <div class="grid gap-6">
-    <div class="flex flex-wrap items-center gap-3">
-      <div class="flex rounded-md border border-subtle bg-elevated p-0.5" role="group" aria-label="range">
-        <button v-for="d in [7, 30, 90]" :key="d" class="rounded-sm px-2 py-0.5" :class="days === d ? 'bg-active text-bright' : 'text-tertiary'" :aria-pressed="days === d" @click="days = d">{{ d }}d</button>
+  <div class="grid gap-3 xl:grid-cols-2">
+    <section class="card grid content-start gap-3 px-5 py-4">
+      <h3 class="m-0 text-[13px] font-medium text-secondary">By model</h3>
+      <div class="grid grid-cols-[minmax(0,1fr)_repeat(4,auto)] gap-x-6 gap-y-1.5 text-[13px]">
+        <span class="text-tertiary">Model</span><span class="text-tertiary">Reviews</span><span class="text-tertiary">Average</span><span class="text-tertiary">Tokens</span><span class="text-tertiary">Blocking</span>
+        <template v-for="m in data.byModel" :key="m.model">
+          <span class="text-bright">{{ m.model }}</span><span>{{ m.reviews }}</span><span class="text-secondary">{{ dur(m.avg_ms) }}</span>
+          <span class="text-secondary">{{ Math.round((m.tokens_in + m.tokens_out) / 1000) }}k</span><span class="text-danger">{{ m.blocking_reviews }}</span>
+        </template>
       </div>
-      <span v-if="data" class="text-tertiary"><span class="text-bright">{{ total.reviews }}</span> reviews · <span class="text-bright">{{ data.posted }}</span> posted ·
-        ~<span class="text-bright">${{ total.cost.toFixed(2) }}</span> at api prices
-        <template v-if="data.confirmation.confirmations"> · second run agreed on <span class="text-bright">{{ Math.round(((data.confirmation.agreed ?? 0) / data.confirmation.confirmations) * 100) }}%</span> of reviews with blocking candidates</template></span>
-    </div>
-    <div v-if="data" class="grid gap-6 xl:grid-cols-2">
-      <section class="grid gap-2 rounded-lg border border-subtle bg-surface px-4 py-3">
-        <h3 class="m-0 text-sm font-medium text-bright"><span class="text-ok">#</span> by model</h3>
-        <div class="grid grid-cols-[1fr_repeat(4,auto)] gap-x-5 gap-y-1 text-[13px]">
-          <span class="text-faint">model</span><span class="text-faint">reviews</span><span class="text-faint">avg</span><span class="text-faint">tokens</span><span class="text-faint">blocking</span>
-          <template v-for="m in data.byModel" :key="m.model">
-            <span class="text-accent2">{{ m.model }}</span><span class="text-bright">{{ m.reviews }}</span><span class="text-secondary">{{ dur(m.avg_ms) }}</span>
-            <span class="text-secondary">{{ Math.round((m.tokens_in + m.tokens_out) / 1000) }}k</span><span class="text-danger">{{ m.blocking_reviews }}</span>
-          </template>
-        </div>
-        <div v-if="!data.byModel.length" class="text-tertiary">// no finished reviews in this range</div>
-      </section>
-      <section class="grid gap-2 rounded-lg border border-subtle bg-surface px-4 py-3">
-        <h3 class="m-0 text-sm font-medium text-bright"><span class="text-ok">#</span> by profile</h3>
-        <div class="grid grid-cols-[1fr_repeat(3,auto)] gap-x-5 gap-y-1 text-[13px]">
-          <span class="text-faint">profile</span><span class="text-faint">reviews</span><span class="text-faint">avg</span><span class="text-faint">api price</span>
-          <template v-for="p in data.byProfile" :key="p.profile">
-            <span class="text-secondary">{{ p.profile.toLowerCase() }}</span><span class="text-bright">{{ p.reviews }}</span><span class="text-secondary">{{ dur(p.avg_ms) }}</span><span class="text-secondary">${{ p.cost_usd.toFixed(2) }}</span>
-          </template>
-        </div>
-      </section>
-      <section class="grid gap-2 rounded-lg border border-subtle bg-surface px-4 py-3">
-        <h3 class="m-0 text-sm font-medium text-bright"><span class="text-ok">#</span> findings by category</h3>
-        <div v-for="[c, n] in cats" :key="c" class="flex items-center gap-3 text-[13px]">
-          <span class="w-36 text-secondary">{{ c }}</span><TBar :pct="(n / catMax) * 100" :width="24" hide-label /><span class="text-bright">{{ n }}</span>
-        </div>
-        <div v-if="!cats.length" class="text-tertiary">// no findings in this range</div>
-      </section>
-      <section class="grid gap-2 rounded-lg border border-subtle bg-surface px-4 py-3">
-        <h3 class="m-0 text-sm font-medium text-bright"><span class="text-ok">#</span> per day</h3>
-        <div v-for="d in data.byDay" :key="d.day" class="flex items-center gap-3 text-[13px]">
-          <span class="w-24 text-tertiary">{{ d.day.slice(5) }}</span><TBar :pct="(d.reviews / dayMax) * 100" :width="24" hide-label />
-          <span class="text-bright">{{ d.reviews }}</span><span v-if="d.failed" class="text-warn">{{ d.failed }} failed</span>
-        </div>
-        <div v-if="!data.byDay.length" class="text-tertiary">// nothing yet</div>
-      </section>
-    </div>
+      <p v-if="!data.byModel.length" class="hint">No finished reviews in this period.</p>
+    </section>
+    <section class="card grid content-start gap-3 px-5 py-4">
+      <h3 class="m-0 text-[13px] font-medium text-secondary">By profile</h3>
+      <div class="grid grid-cols-[minmax(0,1fr)_repeat(3,auto)] gap-x-6 gap-y-1.5 text-[13px]">
+        <span class="text-tertiary">Profile</span><span class="text-tertiary">Reviews</span><span class="text-tertiary">Average</span><span class="text-tertiary">At API prices</span>
+        <template v-for="p in data.byProfile" :key="p.profile">
+          <span class="text-bright">{{ p.profile }}</span><span>{{ p.reviews }}</span><span class="text-secondary">{{ dur(p.avg_ms) }}</span><span class="text-secondary">${{ p.cost_usd.toFixed(2) }}</span>
+        </template>
+      </div>
+    </section>
+    <section class="card grid content-start gap-2.5 px-5 py-4">
+      <h3 class="m-0 text-[13px] font-medium text-secondary">Findings by category</h3>
+      <div v-for="[c, n] in cats" :key="c" class="grid grid-cols-[150px_minmax(0,1fr)_32px] items-center gap-3 text-[13px]">
+        <span class="font-mono text-xs text-secondary">{{ c }}</span><TBar :pct="(n / catMax) * 100" relative /><span class="text-right text-bright">{{ n }}</span>
+      </div>
+      <p v-if="!cats.length" class="hint">No findings in this period.</p>
+    </section>
+    <section class="card grid content-start gap-2.5 px-5 py-4">
+      <h3 class="m-0 text-[13px] font-medium text-secondary">Per day</h3>
+      <div v-for="d in data.byDay" :key="d.day" class="grid grid-cols-[60px_minmax(0,1fr)_90px] items-center gap-3 text-[13px]">
+        <span class="text-tertiary">{{ d.day.slice(5) }}</span><TBar :pct="(d.reviews / dayMax) * 100" color="#7ccbea" relative />
+        <span class="text-right">{{ d.reviews }}<span v-if="d.failed" class="text-warn"> · {{ d.failed }} failed</span></span>
+      </div>
+      <p v-if="!data.byDay.length" class="hint">Nothing yet.</p>
+    </section>
   </div>
 </template>

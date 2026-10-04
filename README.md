@@ -12,7 +12,7 @@ Every finding quotes the diff, and the quote is checked against the diff before 
 shown; blocking findings need a second, independent run to agree.
 
 ```
- browser ── Vue SPA (terminal style) ──► Hono API + SSE ─┬─► scheduler: targets → items (GitHub REST)
+ browser ── Vue SPA ──► Hono API + SSE ─┬─► scheduler: targets → items (GitHub REST)
                                                         ├─► worker: diff → claude -p (no tools) → verify → verdict
                                                         ├─► publish: one marked PR comment (only on request)
                                                         └─► SQLite on a volume: users, encrypted tokens, targets, items, reviews
@@ -93,7 +93,7 @@ src/
   review/          diff budget, prompt, Claude call, two-run pipeline, evidence check
   verdict/         blocking rules, finding markers
   store/           SQLite, migrations, repositories, AES-GCM secrets, v1 import
-web/               Vue 3 + Vite + Tailwind v4 SPA (terminal style, dark only)
+web/               Vue 3 + Vite + Tailwind v4 SPA (Graphite, dark only)
 k8s/  scripts/     manifests; deploy.sh and set-secret.sh (read .deploy.env)
 tests/             bun test; tests/fakes has a fake GitHub server
 ```

@@ -5,18 +5,19 @@ import { connect, loadState, store } from "./store";
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: "/", name: "overview", component: () => import("./pages/Overview.vue") },
-    { path: "/inbox", name: "inbox", component: () => import("./pages/Inbox.vue") },
-    { path: "/items/:id", name: "item", component: () => import("./pages/ItemPage.vue"), props: true },
+    { path: "/", name: "inbox", component: () => import("./pages/Inbox.vue") },
+    // Old links: the inbox is the home page, an item opens inside it.
+    { path: "/inbox", redirect: (to) => ({ path: "/", query: to.query }) },
+    { path: "/items/:id", redirect: (to) => ({ path: "/", query: { item: String(to.params.id) } }) },
     { path: "/targets", name: "targets", component: () => import("./pages/Targets.vue") },
     { path: "/accounts", name: "accounts", component: () => import("./pages/Accounts.vue") },
     { path: "/profiles", name: "profiles", component: () => import("./pages/Profiles.vue") },
     { path: "/activity", name: "activity", component: () => import("./pages/Activity.vue") },
     { path: "/settings", name: "settings", component: () => import("./pages/Settings.vue") },
     { path: "/admin", name: "admin", component: () => import("./pages/Admin.vue") },
-    { path: "/invite/:token", name: "invite", component: () => import("./pages/Login.vue"), meta: { public: true, invite: true } },
     { path: "/login", name: "login", component: () => import("./pages/Login.vue"), meta: { public: true } },
     { path: "/setup", name: "setup", component: () => import("./pages/Login.vue"), meta: { public: true, setup: true } },
+    { path: "/invite/:token", name: "invite", component: () => import("./pages/Login.vue"), meta: { public: true, invite: true } },
     { path: "/:rest(.*)", redirect: "/" },
   ],
 });
@@ -35,7 +36,8 @@ router.beforeEach(async (to) => {
   }
 });
 
-/** Opens the review panel over the current page. */
+/** Opens a review: inside the inbox there, as a side panel elsewhere. */
 export function openReview(id: number): void {
-  void router.push({ query: { ...router.currentRoute.value.query, review: String(id) } });
+  const current = router.currentRoute.value;
+  void router.push({ query: { ...current.query, review: String(id) } });
 }

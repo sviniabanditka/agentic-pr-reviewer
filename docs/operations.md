@@ -88,18 +88,18 @@ Afterwards the v1 variables can be removed from the Secret and `config.json` del
 
 ## The web app
 
+The rail on the left: Inbox, Targets, Profiles, Accounts, Activity, Admin (admins), Settings.
+⌘K (Ctrl+K) opens a palette with pages, pull requests and actions; every action also has a button.
+
 | Page | For |
 |---|---|
-| overview | Account cards (Claude 5h/7d and GitHub quota as ASCII bars), the running review with its stage strip, the queue, recent reviews, 24 h totals |
-| inbox | Every open PR from your targets; filter by role, needs review / unposted, state, account; `/` to search; model picker, **review**, **post** per row; add a PR by URL |
-| PR page | Header, labels, size, all reviews of the PR, review / post / archive |
-| review drawer (`?review=<id>` on any page) | Verdict, facts, findings with links to the lines, what happened; **post to pr** (two clicks), cancel, review again, open/copy the comment |
-| targets | List with last poll and errors; editor with presets, filters, automation and a live preview |
-| accounts | GitHub accounts (token, label, credential, default model, check, replace, remove) and Claude credentials (limits, check, remove) |
-| activity | Live log with level filter, grep and follow |
+| inbox | Pull requests from your targets with status chips (Needs me / Running / Done / All) and filters; the selected one opens on the right: its review (findings, runs, log, compare), **Post to PR** with a choice of comment or inline review (two clicks), review again, export, history, archive. **+ Add** takes a PR link, a compare range or a pasted patch |
+| targets | List with on/off switches; editor with presets, filters, what to do on a new commit (list / review / review and post) and a preview of matches |
 | profiles | Review recipes: mode, model, categories and which block, confirmation, budget, instructions; prompt preview on a real PR |
-| activity → insights | Reviews by model, profile and day; findings by category; how often the second run agreed |
-| settings | Models list (admin) |
+| accounts | GitHub accounts (token or GitHub sign-in, Claude credential, default model and profile, quota) and Claude credentials (5-hour and 7-day usage) |
+| activity | Audit log, live log, insights (by model, profile, day, category) |
+| settings | Two-factor and password, notifications, API tokens, retention, models and GitHub sign-in (admin) |
+| admin | People with their load, invites |
 
 ## Troubleshooting
 

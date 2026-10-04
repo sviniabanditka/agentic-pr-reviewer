@@ -2,9 +2,8 @@
 import { onMounted, ref } from "vue";
 import { api } from "../api";
 import { store } from "../store";
-import { dur, stamp } from "../format";
+import { dur, rel, stamp } from "../format";
 import TBtn from "../components/TBtn.vue";
-import TPrompt from "../components/TPrompt.vue";
 import { toast } from "../components/toast";
 
 interface UserLoad {
@@ -49,49 +48,67 @@ async function createInvite() {
 async function copy() {
   try {
     await navigator.clipboard.writeText(link.value!);
-    toast("invite link copied");
+    toast("Invite link copied");
   } catch {
-    toast("could not copy; select the link by hand", true);
+    toast("Could not copy; select the link by hand", true);
   }
 }
 const setUser = (u: UserLoad, body: Record<string, unknown>, ok: string) => act(() => api.patch(`/admin/users/${u.id}`, body), ok);
-const revoke = (i: Invite) => act(() => api.del(`/admin/invites/${i.id}`), "invite revoked");
+const revoke = (i: Invite) => act(() => api.del(`/admin/invites/${i.id}`), "Invite revoked");
+const inviteOpen = ref(false);
 const inviteState = (i: Invite) => (i.used_at ? `joined as ${i.used_by ?? "?"}` : i.expires_at < store.now ? "expired" : `open until ${stamp(i.expires_at)}`);
 </script>
 
 <template>
-  <div class="grid gap-8">
-    <section class="grid gap-3">
-      <div class="flex flex-wrap items-center gap-3">
-        <TPrompt :level="1">users</TPrompt>
-        <span class="text-tertiary">// who uses this instance and how much. reviews, repositories and tokens of others are never shown here.</span>
-        <span class="ml-auto text-tertiary">queue: {{ queue.find((q) => q.status === "running")?.n ?? 0 }} running, {{ queue.find((q) => q.status === "queued")?.n ?? 0 }} waiting</span>
+  <div class="grid gap-9 px-10 pb-12 pt-[22px]">
+    <section aria-labelledby="people" class="grid gap-3.5">
+      <div>
+        <div class="flex flex-wrap items-center gap-2.5">
+          <h1 id="people" class="m-0 text-base font-semibold text-bright">People</h1>
+          <span class="ml-1.5 text-[12.5px] text-tertiary">Queue: {{ queue.find((q) => q.status === "running")?.n ?? 0 }} running, {{ queue.find((q) => q.status === "queued")?.n ?? 0 }} waiting</span>
+          <TBtn class="ml-auto" tone="primary" @click="(inviteOpen = !inviteOpen), (link = null)">+ Invite someone</TBtn>
+        </div>
+        <p class="hint mt-1">Who uses this instance and how much. Their repositories, pull requests and findings are never shown here.</p>
       </div>
-      <div class="overflow-x-auto rounded-lg border border-subtle bg-surface">
-        <table class="w-full min-w-[760px] border-collapse text-left text-[13px]">
-          <thead class="text-tertiary">
-            <tr><th class="px-3 py-2 font-normal">user</th><th class="px-3 py-2 font-normal">last seen</th><th class="px-3 py-2 font-normal">accounts / subs / targets</th>
-              <th class="px-3 py-2 font-normal">reviews 24h / 7d</th><th class="px-3 py-2 font-normal">failed 7d</th><th class="px-3 py-2 font-normal">tokens 7d</th>
-              <th class="px-3 py-2 font-normal">model time 7d</th><th class="px-3 py-2 font-normal">now</th><th class="px-3 py-2" /></tr>
+      <form v-if="inviteOpen" class="card grid gap-3 px-[18px] py-4" @submit.prevent="createInvite">
+        <p class="hint">A one-time link, valid 7 days. The person picks a login and password, then adds their own GitHub accounts and Claude subscription.</p>
+        <div class="flex flex-wrap items-end gap-2.5">
+          <label class="min-w-48 flex-1"><span class="label">Who it is for (only you see this)</span><input v-model="newInvite.note" class="field bg-base" placeholder="alice, backend team" maxlength="120"></label>
+          <label><span class="label">Role</span><select v-model="newInvite.role" class="field w-auto bg-base"><option value="member">Member</option><option value="admin">Admin</option></select></label>
+          <TBtn type="submit" tone="primary">Create link</TBtn>
+        </div>
+        <div v-if="link" class="grid gap-1.5">
+          <span class="text-[13px] text-warn">Shown once — copy it now and send it privately.</span>
+          <div class="flex flex-wrap items-center gap-2"><code class="min-w-0 flex-1 break-all rounded-lg border border-strong bg-base px-3 py-2 text-[12.5px] text-bright">{{ link }}</code><TBtn tone="primary" @click="copy">Copy link</TBtn></div>
+        </div>
+      </form>
+      <div class="panel overflow-x-auto">
+        <table class="w-full min-w-[860px] border-collapse text-left text-[13.5px]">
+          <thead class="bg-[#1a1b20] text-xs text-tertiary">
+            <tr><th class="px-4 py-2.5 font-normal">Person</th><th class="px-3 py-2.5 font-normal">Last seen</th><th class="px-3 py-2.5 font-normal">Accounts · subs · targets</th>
+              <th class="px-3 py-2.5 font-normal">Reviews 24 h / 7 d</th><th class="px-3 py-2.5 font-normal">Failed</th><th class="px-3 py-2.5 font-normal">Tokens 7 d</th>
+              <th class="px-3 py-2.5 font-normal">Model time</th><th class="px-3 py-2.5 font-normal">Now</th><th class="px-4 py-2.5" /></tr>
           </thead>
           <tbody>
-            <tr v-for="u in users" :key="u.id" class="border-t border-subtle" :class="u.disabled ? 'opacity-50' : ''">
-              <td class="px-3 py-2"><span class="text-bright">{{ u.login }}</span>
-                <span v-if="u.role === 'admin'" class="ml-2 text-accent">admin</span><span v-if="u.totp_enabled" class="ml-2 text-ok">2fa</span><span v-if="u.disabled" class="ml-2 text-danger">disabled</span></td>
-              <td class="px-3 py-2 text-tertiary">{{ u.last_seen_at ? stamp(u.last_seen_at) : "never" }}</td>
-              <td class="px-3 py-2 text-secondary">{{ u.accounts }} / {{ u.credentials }} / {{ u.targets }}</td>
-              <td class="px-3 py-2 text-secondary">{{ u.reviews_24h }} / {{ u.reviews_7d }}</td>
-              <td class="px-3 py-2" :class="u.errors_7d ? 'text-warn' : 'text-tertiary'">{{ u.errors_7d }}</td>
-              <td class="px-3 py-2 text-secondary">{{ u.tokens_7d.toLocaleString("en") }}</td>
-              <td class="px-3 py-2 text-secondary">{{ dur(u.busy_ms_7d) }}</td>
-              <td class="px-3 py-2" :class="u.active ? 'text-accent' : 'text-faint'">{{ u.active ? `${u.active} in queue` : "idle" }}</td>
-              <td class="px-3 py-2 text-right">
-                <template v-if="u.id !== store.user?.id">
-                  <TBtn v-if="!u.disabled" tone="danger" :confirm="`disable ${u.login}?`" @click="setUser(u, { disabled: true }, 'user disabled')">disable</TBtn>
-                  <TBtn v-else @click="setUser(u, { disabled: false }, 'user enabled')">enable</TBtn>
-                  <TBtn :confirm="u.role === 'admin' ? 'make member?' : 'make admin?'" @click="setUser(u, { role: u.role === 'admin' ? 'member' : 'admin' }, 'role changed')">{{ u.role === "admin" ? "make member" : "make admin" }}</TBtn>
-                  <TBtn v-if="u.totp_enabled" confirm="turn off their 2fa?" @click="setUser(u, { resetTotp: true }, '2fa reset')">reset 2fa</TBtn>
-                </template>
+            <tr v-for="u in users" :key="u.id" class="border-t border-subtle" :class="u.disabled ? 'opacity-55' : ''">
+              <td class="px-4 py-3"><span class="font-medium text-bright">{{ u.login }}</span>
+                <span class="chip ml-1.5" :class="u.role === 'admin' ? 'bg-accent-bg text-[#dcd4ff]' : ''">{{ u.role }}</span>
+                <span v-if="u.totp_enabled" class="ml-1.5 text-[11.5px] text-ok">2FA</span><span v-if="u.disabled" class="ml-1.5 text-[11.5px] text-danger">disabled</span></td>
+              <td class="px-3 py-3 text-secondary">{{ u.last_seen_at ? rel(u.last_seen_at, store.now) : "never" }}</td>
+              <td class="px-3 py-3 text-secondary">{{ u.accounts }} · {{ u.credentials }} · {{ u.targets }}</td>
+              <td class="px-3 py-3">{{ u.reviews_24h }} / {{ u.reviews_7d }}</td>
+              <td class="px-3 py-3" :class="u.errors_7d ? 'text-warn' : 'text-secondary'">{{ u.errors_7d }}</td>
+              <td class="px-3 py-3 text-secondary">{{ u.tokens_7d.toLocaleString("en") }}</td>
+              <td class="px-3 py-3 text-secondary">{{ dur(u.busy_ms_7d) || "0s" }}</td>
+              <td class="px-3 py-3" :class="u.active ? 'text-accent2' : 'text-tertiary'">{{ u.active ? `${u.active} in queue` : "idle" }}</td>
+              <td class="whitespace-nowrap px-4 py-3 text-right">
+                <span v-if="u.id !== store.user?.id" class="inline-flex gap-1.5">
+                  <TBtn v-if="u.totp_enabled" size="sm" tone="ghost" :confirm="`Turn off 2FA for ${u.login}?`" @click="setUser(u, { resetTotp: true }, 'Two-factor reset')">Reset 2FA</TBtn>
+                  <TBtn size="sm" tone="ghost" :confirm="u.role === 'admin' ? 'Make member?' : 'Make admin?'" @click="setUser(u, { role: u.role === 'admin' ? 'member' : 'admin' }, 'Role changed')">{{ u.role === "admin" ? "Make member" : "Make admin" }}</TBtn>
+                  <TBtn v-if="!u.disabled" size="sm" tone="danger" :confirm="`Disable ${u.login}?`" @click="setUser(u, { disabled: true }, 'Disabled')">Disable</TBtn>
+                  <TBtn v-else size="sm" @click="setUser(u, { disabled: false }, 'Enabled')">Enable</TBtn>
+                </span>
+                <span v-else class="text-xs text-faint">you</span>
               </td>
             </tr>
           </tbody>
@@ -99,25 +116,14 @@ const inviteState = (i: Invite) => (i.used_at ? `joined as ${i.used_by ?? "?"}` 
       </div>
     </section>
 
-    <section class="grid gap-3">
-      <TPrompt>invites</TPrompt>
-      <form class="flex flex-wrap items-end gap-3 rounded-lg border border-subtle bg-surface px-5 py-4" @submit.prevent="createInvite">
-        <p class="m-0 w-full text-tertiary">// a one-time link valid for 7 days. the person picks their own login and password, then adds their own github accounts and claude subscription.</p>
-        <label class="min-w-48 flex-1"><span class="label">who is it for (only you see this)</span><input v-model="newInvite.note" class="field" placeholder="alice, backend team" maxlength="120"></label>
-        <label><span class="label">role</span><select v-model="newInvite.role" class="field w-auto"><option value="member">member</option><option value="admin">admin</option></select></label>
-        <TBtn type="submit" tone="primary">create link</TBtn>
-        <div v-if="link" class="grid w-full gap-1">
-          <span class="text-warn">// shown once — copy it now and send it privately.</span>
-          <div class="flex flex-wrap items-center gap-2"><code class="break-all rounded-sm bg-base px-2 py-1 text-bright">{{ link }}</code><TBtn @click="copy">copy</TBtn></div>
-        </div>
-      </form>
-      <div v-if="invites.length" class="grid gap-0.5 rounded-lg border border-subtle bg-surface py-2 text-[13px]">
-        <div v-for="i in invites" :key="i.id" class="flex flex-wrap items-center gap-3 px-4 py-px">
-          <span class="text-faint">{{ stamp(i.created_at) }}</span>
-          <span class="text-secondary">{{ i.note || "—" }}</span>
-          <span class="text-accent2">{{ i.role }}</span>
-          <span class="text-tertiary">{{ inviteState(i) }}</span>
-          <TBtn v-if="!i.used_at && i.expires_at > store.now" class="ml-auto" tone="danger" @click="revoke(i)">revoke</TBtn>
+    <section v-if="invites.length" aria-labelledby="invites" class="grid gap-3">
+      <h2 id="invites" class="m-0 text-[15px] font-semibold text-bright">Invites</h2>
+      <div class="panel overflow-hidden">
+        <div v-for="i in invites" :key="i.id" class="flex flex-wrap items-center gap-3 border-t border-subtle px-4 py-3 text-[13.5px] first:border-t-0">
+          <span class="text-xs text-tertiary">{{ stamp(i.created_at) }}</span>
+          <span class="font-medium text-bright">{{ i.note || "—" }}</span><span class="chip">{{ i.role }}</span>
+          <span class="text-[12.5px] text-tertiary">{{ inviteState(i) }}</span>
+          <TBtn v-if="!i.used_at && i.expires_at > store.now" class="ml-auto" size="sm" tone="danger" @click="revoke(i)">Revoke</TBtn>
         </div>
       </div>
     </section>

@@ -1,15 +1,20 @@
 <script setup lang="ts">
 import { computed } from "vue";
-// ASCII meter: [████░░░░░░] 42%. Turns warn at 70 %, danger at 90 %.
-const props = withDefaults(defineProps<{ pct: number | null; width?: number; hideLabel?: boolean }>(), { width: 12 });
+// A thin meter; as a usage meter it turns warn at 70 %, danger at 90 %. `relative` bars
+// (share of the largest) keep their colour.
+const props = withDefaults(defineProps<{ pct: number | null; label?: string; color?: string; relative?: boolean }>(), {});
 const clamped = computed(() => (props.pct == null ? null : Math.max(0, Math.min(100, props.pct))));
-const filled = computed(() => Math.round(((clamped.value ?? 0) / 100) * props.width));
-const color = computed(() => (clamped.value == null ? "text-faint" : clamped.value >= 90 ? "text-danger" : clamped.value >= 70 ? "text-warn" : "text-ok"));
+const fill = computed(() => {
+  if (clamped.value == null) return "";
+  if (!props.relative && clamped.value >= 90) return "#ff9c86";
+  if (!props.relative && clamped.value >= 70) return "#f2b880";
+  return props.color ?? "#9d8cff";
+});
 </script>
 
 <template>
-  <span class="whitespace-nowrap" role="meter" :aria-valuenow="clamped ?? 0" aria-valuemin="0" aria-valuemax="100">
-    <span class="text-tertiary">[</span><span :class="color">{{ "█".repeat(filled) }}</span><span class="text-faint/60">{{ "░".repeat(width - filled) }}</span><span class="text-tertiary">]</span>
-    <span v-if="!hideLabel" class="ml-1.5" :class="clamped == null ? 'text-faint' : 'text-bright'">{{ clamped == null ? "--" : `${Math.round(clamped)}%` }}</span>
-  </span>
+  <div role="meter" :aria-valuenow="clamped ?? 0" aria-valuemin="0" aria-valuemax="100" :aria-label="label">
+    <div v-if="label" class="flex text-xs text-tertiary"><span class="flex-1">{{ label }}</span><span>{{ clamped == null ? "--" : `${Math.round(clamped)}%` }}</span></div>
+    <div class="mt-1 h-1 rounded bg-strong"><div class="h-1 rounded" :style="{ width: `${clamped ?? 0}%`, background: fill }" /></div>
+  </div>
 </template>

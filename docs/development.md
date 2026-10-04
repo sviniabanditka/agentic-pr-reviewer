@@ -26,10 +26,11 @@ to GitHub or Claude.
 
 ## Frontend
 
-`web/` is a Vue 3 + Vite + Tailwind v4 app. Design tokens (Tokyo Night, JetBrains
-Mono) are in `web/src/styles.css`; component classes go in `@layer components` so
-utilities still win. Shared state is `web/src/store.ts` (one SSE connection);
-terminal components are in `web/src/components/T*.vue`.
+`web/` is a Vue 3 + Vite + Tailwind v4 app. Design tokens (Graphite: dark only,
+violet accent, self-hosted Geist and Geist Mono) are in `web/src/styles.css`; component
+classes (`field`, `chip`, `pill`, `seg`, `tab`, `card`, `panel`) go in `@layer components`
+so utilities still win. Shared state is `web/src/store.ts` (one SSE connection). The
+design source is the canvas linked in `docs/plan/design.md`.
 
 ## After a change
 

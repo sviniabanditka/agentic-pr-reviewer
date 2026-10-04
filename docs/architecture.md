@@ -15,7 +15,7 @@ worker. SQLite on a persistent volume holds everything.
 | Publish | `src/jobs/publish.ts` | Creates or edits the marked PR comment. The only code path that writes to GitHub |
 | GitHub client | `src/github/client.ts` | REST over `fetch` per account token; rate-limit headers, pagination, diff media type |
 | Engine | `src/review/*`, `src/verdict/*` | See [review-pipeline.md](review-pipeline.md) |
-| Web | `web/` | Vue 3 SPA: overview, inbox, PR page, review drawer, targets, accounts, activity, settings |
+| Web | `web/` | Vue 3 SPA: inbox with the review panel, targets, profiles, accounts, activity, settings, admin; ⌘K palette |
 
 ## Data model
 

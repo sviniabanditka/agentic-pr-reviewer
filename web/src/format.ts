@@ -39,3 +39,20 @@ export function verdictWord(r: { status: string; conclusion: string | null; conf
   if (r.status === "skipped") return r.error === "cancelled" ? "cancelled" : "skipped";
   return r.status === "running" ? "reviewing" : "queued";
 }
+
+export interface Tone { label: string; fg: string; bg: string; step: number }
+const T = {
+  none: { fg: "#7e7e8a", bg: "#22232a" }, wait: { fg: "#b9b9c2", bg: "#22232a" }, run: { fg: "#b4a6ff", bg: "#221f30" },
+  ok: { fg: "#8bd3a3", bg: "#17261d" }, block: { fg: "#ff9c86", bg: "#2c1d1e" }, warn: { fg: "#f2b880", bg: "#2b2219" }, info: { fg: "#7ccbea", bg: "#16262e" }, done: { fg: "#7e7e8a", bg: "#1e1f24" },
+};
+/** A review's state as label + colours + how many of the three steps (diff, review, confirm) are behind it. */
+export function reviewTone(r: { status: string; conclusion: string | null; error?: string | null; comment_url?: string | null } | null | undefined, stage?: string | null): Tone {
+  if (!r) return { label: "Not reviewed", ...T.none, step: 0 };
+  if (r.status === "queued") return { label: "Queued", ...T.wait, step: 0 };
+  if (r.status === "running") return { label: stage === "confirm" ? "Confirming" : stage === "review" ? "Reviewing" : "Reading diff", ...T.run, step: stage === "confirm" ? 2 : stage === "review" ? 1 : 0 };
+  if (r.status === "error") return { label: "Failed", ...T.warn, step: 0 };
+  if (r.status === "skipped") return { label: r.error === "cancelled" ? "Cancelled" : "Skipped", ...T.none, step: 0 };
+  if (r.conclusion !== "success") return { label: r.comment_url ? "Blocks · posted" : "Blocks", ...T.block, step: 3 };
+  return r.comment_url ? { label: "Posted", ...T.done, step: 3 } : { label: "Clean", ...T.ok, step: 3 };
+}
+export const NEW_COMMITS: Tone = { label: "New commits", ...T.info, step: 0 };

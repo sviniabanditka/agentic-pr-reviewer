@@ -4,6 +4,17 @@ Newest first.
 
 ---
 
+# 2026-10-04 — new panel design (Graphite)
+
+- Dark-only redesign: icon rail, Geist type, violet accent; the terminal look is gone.
+- The inbox is the home page: list with status chips and filters, the review opens on the
+  right; the separate overview and PR pages are gone (old links redirect).
+- ⌘K palette for pages, pull requests and actions; buttons for everything it does.
+- Post as a split button (comment or inline review); Review again, Export and History
+  menus; dismiss per finding; first-run checklist; Add dialog for PR / compare / patch.
+
+---
+
 # 2026-10-03 — v2 phase 4 (part 1): colleagues, CLI, API keys
 
 - Colleagues: admin invite links (7 days, one use), admin page with per-user load

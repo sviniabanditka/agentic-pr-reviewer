@@ -6,7 +6,6 @@ import { rel } from "../format";
 import type { Account } from "../types";
 import TBar from "../components/TBar.vue";
 import TBtn from "../components/TBtn.vue";
-import TPrompt from "../components/TPrompt.vue";
 import { toast } from "../components/toast";
 
 const newAccount = reactive({ token: "", label: "", busy: false, open: false });
@@ -15,28 +14,27 @@ const replacing = ref<string | null>(null);
 const replaceToken = ref("");
 const busy = reactive<Record<string, boolean>>({});
 
-async function run(key: string, fn: () => Promise<unknown>, ok?: string) {
+async function run(key: string, fn: () => Promise<unknown>, ok?: string): Promise<boolean> {
   busy[key] = true;
   try {
     await fn();
     if (ok) toast(ok);
     await refreshState();
+    return true;
   } catch (e) {
     toast((e as Error).message, true);
+    return false;
   } finally {
     busy[key] = false;
   }
 }
 async function addAccount() {
-  newAccount.busy = true;
-  await run("add-account", () => api.post("/accounts", { token: newAccount.token, label: newAccount.label || undefined }), "account added");
-  if (!busy["add-account"]) Object.assign(newAccount, { token: "", label: "", open: false });
-  newAccount.busy = false;
+  if (await run("add-account", () => api.post("/accounts", { token: newAccount.token, label: newAccount.label || undefined }), "Account added")) Object.assign(newAccount, { token: "", label: "", open: false });
 }
-const device = reactive<{ id: string; userCode: string; verificationUri: string; interval: number } | { id: null }>({ id: null });
+const device = reactive<{ id: string | null; userCode?: string; verificationUri?: string; interval?: number }>({ id: null });
 async function deviceLogin() {
   try {
-    Object.assign(device, await api.post("/accounts/device", { label: newAccount.label || undefined }));
+    Object.assign(device, await api.post("/accounts/device", {}));
     void pollDevice();
   } catch (e) {
     toast((e as Error).message, true);
@@ -44,145 +42,144 @@ async function deviceLogin() {
 }
 async function pollDevice() {
   while (device.id) {
-    await new Promise((r) => setTimeout(r, ("interval" in device ? device.interval : 5) * 1000 + 500));
+    await new Promise((r) => setTimeout(r, (device.interval ?? 5) * 1000 + 500));
     if (!device.id) return;
     try {
       const r = await api.post<{ status: string }>(`/accounts/device/${device.id}`);
       if (r.status === "done") {
-        Object.assign(device, { id: null });
-        Object.assign(newAccount, { token: "", label: "", open: false });
-        toast("account added");
+        device.id = null;
+        toast("Account added");
         await refreshState();
       }
     } catch (e) {
-      Object.assign(device, { id: null });
+      device.id = null;
       toast((e as Error).message, true);
     }
   }
 }
 async function addCredential() {
-  newCred.busy = true;
-  await run("add-cred", () => api.post("/credentials", { provider: newCred.provider, token: newCred.token, label: newCred.label || undefined }), "credential added");
-  Object.assign(newCred, { provider: "claude-cli", token: "", label: "", open: false, busy: false });
+  if (await run("add-cred", () => api.post("/credentials", { provider: newCred.provider, token: newCred.token, label: newCred.label || undefined }), "Credential added")) {
+    Object.assign(newCred, { provider: "claude-cli", token: "", label: "", open: false });
+  }
 }
-const patch = (a: Account, body: Record<string, unknown>) => run(a.id, () => api.patch(`/accounts/${a.id}`, body), "saved");
-const checkAccount = (id: string) => run(`check-${id}`, () => api.post(`/accounts/${id}/check`), "checked");
-const removeAccount = (id: string) => run(id, () => api.del(`/accounts/${id}`), "account removed");
+const patch = (a: Account, body: Record<string, unknown>) => run(a.id, () => api.patch(`/accounts/${a.id}`, body), "Saved");
+const checkAccount = (id: string) => run(`check-${id}`, () => api.post(`/accounts/${id}/check`), "Checked");
+const removeAccount = (id: string) => run(id, () => api.del(`/accounts/${id}`), "Account removed");
 async function saveToken(id: string) {
-  await run(`tok-${id}`, () => api.put(`/accounts/${id}/token`, { token: replaceToken.value }), "token replaced");
-  replacing.value = null;
+  if (await run(`tok-${id}`, () => api.put(`/accounts/${id}/token`, { token: replaceToken.value }), "Token replaced")) replacing.value = null;
 }
-const renameCredential = (id: string, label: string) => run(id, () => api.patch(`/credentials/${id}`, { label }), "saved");
-const checkCredential = (id: string) => run(`check-${id}`, () => api.post(`/credentials/${id}/check`), "limits refreshed");
-const removeCredential = (id: string) => run(id, () => api.del(`/credentials/${id}`), "credential removed");
-const inputValue = (e: Event) => (e.target as HTMLInputElement).value;
+const renameCredential = (id: string, label: string) => run(id, () => api.patch(`/credentials/${id}`, { label }), "Saved");
+const checkCredential = (id: string) => run(`check-${id}`, () => api.post(`/credentials/${id}/check`), "Limits refreshed");
+const removeCredential = (id: string) => run(id, () => api.del(`/credentials/${id}`), "Credential removed");
+const value = (e: Event) => (e.target as HTMLInputElement).value;
+const used = (q?: { limit: number; remaining: number }) => (q ? 100 - (q.remaining / q.limit) * 100 : null);
 </script>
 
 <template>
-  <div class="grid gap-8">
-    <section class="grid gap-3">
-      <div class="flex flex-wrap items-center gap-3">
-        <TPrompt :level="1">github accounts</TPrompt>
-        <TBtn class="ml-auto" tone="primary" @click="newAccount.open = !newAccount.open">add account</TBtn>
-      </div>
-      <form v-if="newAccount.open" class="grid gap-3 rounded-lg border border-accent/40 bg-surface px-5 py-4" @submit.prevent="addAccount">
-        <p class="m-0 text-tertiary">// paste a token: <span class="text-secondary">gh auth token --user &lt;login&gt;</span>, or a fine-grained token with pull requests: read &amp; write, contents: read.
-          it is checked against github, then stored encrypted and never shown again.</p>
-        <div class="grid gap-3 md:grid-cols-[2fr_1fr_auto] md:items-end">
-          <label><span class="label">token</span><input v-model="newAccount.token" class="field" type="password" autocomplete="off" required></label>
-          <label><span class="label">label (optional)</span><input v-model="newAccount.label" class="field" placeholder="work"></label>
-          <TBtn type="submit" tone="primary" :busy="newAccount.busy">check &amp; save</TBtn>
+  <div class="grid max-w-[1200px] gap-9 px-10 pb-12 pt-[26px]">
+    <section aria-labelledby="gh" class="grid gap-3.5">
+      <div>
+        <div class="flex flex-wrap items-center gap-2">
+          <h1 id="gh" class="m-0 text-base font-semibold text-bright">GitHub accounts</h1>
+          <span class="ml-auto" />
+          <TBtn v-if="!device.id" @click="deviceLogin">Sign in with GitHub</TBtn>
+          <TBtn tone="primary" @click="newAccount.open = !newAccount.open">+ Paste a token</TBtn>
         </div>
-        <div class="flex flex-wrap items-center gap-2 text-tertiary">
-          <span>// or</span>
-          <TBtn v-if="!device.id" @click="deviceLogin">sign in with github</TBtn>
-          <template v-else-if="'userCode' in device">
-            <span>open <a :href="device.verificationUri" target="_blank" rel="noopener" class="text-accent hover:underline">{{ device.verificationUri }}</a> and enter</span>
-            <span class="rounded-sm bg-base px-2 py-0.5 text-bright tracking-widest">{{ device.userCode }}</span>
-            <span class="text-faint">waiting…</span>
-            <TBtn @click="Object.assign(device, { id: null })">cancel</TBtn>
-          </template>
+        <p class="hint mt-1">Whose name reviews are posted under. Tokens are checked with GitHub, stored encrypted and never shown again.</p>
+      </div>
+      <div v-if="device.id && device.userCode" class="card flex flex-wrap items-center gap-3 px-5 py-4">
+        <span>Open <a :href="device.verificationUri" target="_blank" rel="noopener" class="link">{{ device.verificationUri }}</a> and enter</span>
+        <span class="rounded-lg bg-base px-3 py-1 font-mono text-lg tracking-[0.25em] text-bright">{{ device.userCode }}</span>
+        <span class="text-tertiary">Waiting for GitHub…</span>
+        <TBtn class="ml-auto" tone="ghost" @click="device.id = null">Cancel</TBtn>
+      </div>
+      <form v-if="newAccount.open" class="card grid gap-3 px-5 py-4" @submit.prevent="addAccount">
+        <p class="hint">A token from <span class="font-mono text-secondary">gh auth token --user &lt;login&gt;</span>, or a fine-grained token with Pull requests: read and write, Contents: read.</p>
+        <div class="grid gap-3 md:grid-cols-[2fr_1fr_auto] md:items-end">
+          <label><span class="label">Token</span><input v-model="newAccount.token" class="field" type="password" autocomplete="off" required></label>
+          <label><span class="label">Name (optional)</span><input v-model="newAccount.label" class="field" placeholder="work"></label>
+          <TBtn type="submit" tone="primary" :busy="busy['add-account']">Check and save</TBtn>
         </div>
       </form>
-      <ul class="m-0 grid gap-2 p-0">
-        <li v-for="a in store.accounts" :key="a.id" class="grid list-none gap-3 rounded-lg border border-subtle bg-surface px-4 py-4">
-          <div class="flex flex-wrap items-center gap-3">
-            <span class="font-medium text-bright">{{ a.label }}</span><span class="text-tertiary">@{{ a.login }}</span>
-            <span :class="a.status === 'ok' ? 'text-ok' : 'text-danger'">● {{ a.status }}</span>
-            <span class="text-faint">token {{ a.tokenHint }}</span>
-            <span v-if="a.scopes" class="text-faint">scopes: {{ a.scopes }}</span>
-            <span class="ml-auto flex items-center gap-2 text-tertiary">github api <TBar :pct="a.github?.core ? 100 - (a.github.core.remaining / a.github.core.limit) * 100 : null" :width="10" /></span>
+      <div class="grid gap-3 lg:grid-cols-2">
+        <article v-for="a in store.accounts" :key="a.id" class="card grid content-start gap-3.5 px-5 py-[18px]">
+          <div class="flex items-center gap-2.5">
+            <span aria-hidden="true" class="grid size-8 place-items-center rounded-full bg-[#2a2836] font-semibold text-[#dcd4ff]">{{ a.label.charAt(0).toUpperCase() }}</span>
+            <div class="min-w-0 flex-1">
+              <input :value="a.label" class="w-full bg-transparent font-medium text-bright outline-none" :aria-label="`Name of @${a.login}`" @change="patch(a, { label: value($event) })">
+              <div class="text-[12.5px] text-tertiary">@{{ a.login }} · token {{ a.tokenHint }} · checked {{ rel(a.checkedAt, store.now) }}</div>
+            </div>
+            <span class="chip" :class="a.status === 'ok' ? 'bg-ok-bg text-ok' : 'bg-danger-bg text-danger'">{{ a.status === "ok" ? "working" : a.status }}</span>
           </div>
-          <div v-if="a.statusDetail" class="text-danger">! {{ a.statusDetail }}</div>
-          <div class="grid gap-3 md:grid-cols-4">
-            <label><span class="label">label</span><input :value="a.label" class="field" @change="patch(a, { label: inputValue($event) })"></label>
-            <label><span class="label">claude credential for reviews</span>
-              <select :value="a.credentialId ?? ''" class="field" @change="patch(a, { credentialId: inputValue($event) || null })">
-                <option value="">none — reviews off</option><option v-for="c in store.credentials" :key="c.id" :value="c.id">{{ c.label }}</option></select></label>
-            <label><span class="label">default model</span>
-              <select :value="a.model ?? ''" class="field" @change="patch(a, { model: inputValue($event) || null })">
-                <option value="">first in the list ({{ store.models[0] }})</option><option v-for="m in store.models" :key="m" :value="m">{{ m }}</option></select></label>
-            <label><span class="label">default profile</span>
-              <select :value="a.profileId ?? ''" class="field" @change="patch(a, { profileId: inputValue($event) || null })">
-                <option value="">your default ({{ store.profiles.find((p) => p.isDefault)?.name.toLowerCase() }})</option>
-                <option v-for="p in store.profiles" :key="p.id" :value="p.id">{{ p.name.toLowerCase() }}</option></select></label>
+          <p v-if="a.statusDetail" class="m-0 text-[13px] text-danger">{{ a.statusDetail }}</p>
+          <div class="grid grid-cols-2 gap-3">
+            <TBar label="GitHub API used" :pct="used(a.github?.core)" color="#8bd3a3" />
+            <TBar label="Search used" :pct="used(a.github?.search)" color="#8bd3a3" />
           </div>
-          <div class="flex flex-wrap items-center gap-1">
-            <TBtn :busy="busy[`check-${a.id}`]" @click="checkAccount(a.id)">check token</TBtn>
-            <TBtn @click="(replacing = replacing === a.id ? null : a.id), (replaceToken = '')">replace token</TBtn>
-            <TBtn tone="danger" :confirm="`remove @${a.login} and its targets?`" @click="removeAccount(a.id)">remove</TBtn>
-            <span class="ml-auto text-faint">checked {{ rel(a.checkedAt, store.now) }}</span>
+          <div class="grid gap-2 sm:grid-cols-3">
+            <label><span class="label">Claude</span>
+              <select :value="a.credentialId ?? ''" class="field bg-base py-1.5 text-[13px]" @change="patch(a, { credentialId: value($event) || null })">
+                <option value="">None — reviews off</option><option v-for="c in store.credentials" :key="c.id" :value="c.id">{{ c.label }}</option></select></label>
+            <label><span class="label">Model</span>
+              <select :value="a.model ?? ''" class="field bg-base py-1.5 text-[13px]" @change="patch(a, { model: value($event) || null })">
+                <option value="">First in the list ({{ store.models[0] }})</option><option v-for="m in store.models" :key="m" :value="m">{{ m }}</option></select></label>
+            <label><span class="label">Profile</span>
+              <select :value="a.profileId ?? ''" class="field bg-base py-1.5 text-[13px]" @change="patch(a, { profileId: value($event) || null })">
+                <option value="">Your default ({{ store.profiles.find((p) => p.isDefault)?.name }})</option>
+                <option v-for="p in store.profiles" :key="p.id" :value="p.id">{{ p.name }}</option></select></label>
           </div>
-          <form v-if="replacing === a.id" class="flex flex-wrap items-end gap-3" @submit.prevent="saveToken(a.id)">
-            <label class="flex-1"><span class="label">new token for @{{ a.login }}</span><input v-model="replaceToken" class="field" type="password" autocomplete="off" required></label>
-            <TBtn type="submit" tone="primary" :busy="busy[`tok-${a.id}`]">save</TBtn>
+          <div class="flex flex-wrap items-center gap-1.5">
+            <TBtn size="sm" :busy="busy[`check-${a.id}`]" @click="checkAccount(a.id)">Check</TBtn>
+            <TBtn size="sm" @click="(replacing = replacing === a.id ? null : a.id), (replaceToken = '')">Replace token</TBtn>
+            <TBtn class="ml-auto" size="sm" tone="danger" :confirm="`Remove @${a.login} and its targets?`" @click="removeAccount(a.id)">Remove</TBtn>
+          </div>
+          <form v-if="replacing === a.id" class="flex flex-wrap items-end gap-2" @submit.prevent="saveToken(a.id)">
+            <label class="flex-1"><span class="label">New token for @{{ a.login }}</span><input v-model="replaceToken" class="field bg-base" type="password" autocomplete="off" required></label>
+            <TBtn type="submit" tone="primary" :busy="busy[`tok-${a.id}`]">Save</TBtn>
           </form>
-        </li>
-        <li v-if="!store.accounts.length" class="list-none text-tertiary">// no accounts yet</li>
-      </ul>
+        </article>
+      </div>
+      <p v-if="!store.accounts.length" class="hint">No accounts yet. Sign in with GitHub or paste a token.</p>
     </section>
 
-    <section class="grid gap-3">
-      <div class="flex flex-wrap items-center gap-3">
-        <TPrompt :level="1">claude credentials</TPrompt>
-        <TBtn class="ml-auto" tone="primary" @click="newCred.open = !newCred.open">add credential</TBtn>
+    <section aria-labelledby="claude" class="grid gap-3.5">
+      <div>
+        <div class="flex flex-wrap items-center gap-2">
+          <h2 id="claude" class="m-0 text-base font-semibold text-bright">Claude</h2>
+          <TBtn class="ml-auto" tone="primary" @click="newCred.open = !newCred.open">+ Add credential</TBtn>
+        </div>
+        <p class="hint mt-1">Who pays for the model runs: a Claude subscription (from <span class="font-mono">claude setup-token</span>) or an Anthropic API key.</p>
       </div>
-      <form v-if="newCred.open" class="grid gap-3 rounded-lg border border-accent/40 bg-surface px-5 py-4" @submit.prevent="addCredential">
-        <p v-if="newCred.provider === 'claude-cli'" class="m-0 text-tertiary">// run <span class="text-secondary">claude setup-token</span> with the subscription that should pay for reviews and paste its output.
-          it is validated with a tiny haiku request, stored encrypted, and only ever handed to the claude process.</p>
-        <p v-else class="m-0 text-tertiary">// an anthropic api key (console.anthropic.com → api keys). reviews are billed per token to that account; the cost column shows nothing because the api does not report prices.
-          checked by listing models, stored encrypted, sent only to api.anthropic.com.</p>
+      <form v-if="newCred.open" class="card grid gap-3 px-5 py-4" @submit.prevent="addCredential">
+        <p class="hint">{{ newCred.provider === "claude-cli"
+          ? "Run claude setup-token with the subscription that should pay and paste its output. It is checked with a tiny Haiku request, stored encrypted and only handed to the claude process."
+          : "An Anthropic API key (console.anthropic.com → API keys). Billed per token to that account; checked by listing models, sent only to api.anthropic.com." }}</p>
         <div class="grid gap-3 md:grid-cols-[1fr_2fr_1fr_auto] md:items-end">
-          <label><span class="label">kind</span><select v-model="newCred.provider" class="field"><option value="claude-cli">claude subscription</option><option value="anthropic-api">anthropic api key</option></select></label>
-          <label><span class="label">token</span><input v-model="newCred.token" class="field" type="password" autocomplete="off" required></label>
-          <label><span class="label">label</span><input v-model="newCred.label" class="field" placeholder="personal max"></label>
-          <TBtn type="submit" tone="primary" :busy="newCred.busy">validate &amp; save</TBtn>
+          <label><span class="label">Kind</span><select v-model="newCred.provider" class="field"><option value="claude-cli">Claude subscription</option><option value="anthropic-api">Anthropic API key</option></select></label>
+          <label><span class="label">Token</span><input v-model="newCred.token" class="field" type="password" autocomplete="off" required></label>
+          <label><span class="label">Name</span><input v-model="newCred.label" class="field" placeholder="Personal Max"></label>
+          <TBtn type="submit" tone="primary" :busy="busy['add-cred']">Check and save</TBtn>
         </div>
       </form>
-      <ul class="m-0 grid gap-2 p-0">
-        <li v-for="c in store.credentials" :key="c.id" class="grid list-none gap-2 rounded-lg border border-subtle bg-surface px-4 py-4">
-          <div class="flex flex-wrap items-center gap-3">
-            <input :value="c.label" class="field w-56 py-1" :aria-label="`label of ${c.label}`" @change="renameCredential(c.id, inputValue($event))">
-            <span class="text-tertiary">{{ c.provider }}</span>
-            <span :class="c.status === 'ok' ? 'text-ok' : 'text-warn'">● {{ c.status }}</span>
-            <span class="text-faint">token {{ c.tokenHint }}</span>
-            <span class="text-faint">used by {{ store.accounts.filter((a) => a.credentialId === c.id).map((a) => a.label).join(", ") || "no account" }}</span>
+      <div v-if="store.credentials.length" class="panel overflow-hidden">
+        <div v-for="c in store.credentials" :key="c.id" class="grid items-center gap-x-5 gap-y-2 border-t border-subtle px-[18px] py-3.5 first:border-t-0 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
+          <div class="min-w-0">
+            <input :value="c.label" class="w-full bg-transparent font-medium text-bright outline-none" :aria-label="`Name of ${c.label}`" @change="renameCredential(c.id, value($event))">
+            <div class="truncate text-[12.5px] text-tertiary">{{ c.provider === "anthropic-api" ? "Anthropic API key" : "Claude subscription" }} · {{ c.tokenHint }} · used by {{ store.accounts.filter((a) => a.credentialId === c.id).map((a) => a.label).join(", ") || "no account" }}</div>
+            <div v-if="c.statusDetail" class="text-xs text-warn">{{ c.statusDetail }}</div>
           </div>
-          <div class="flex flex-wrap items-center gap-x-6 gap-y-1">
-            <span class="flex items-center gap-2"><span class="text-tertiary">5h</span><TBar :pct="c.limits?.fiveHour ? c.limits.fiveHour.utilization * 100 : null" />
-              <span class="text-faint">{{ c.limits?.fiveHour ? `resets ${rel(c.limits.fiveHour.resetsAt, store.now)}` : "" }}</span></span>
-            <span class="flex items-center gap-2"><span class="text-tertiary">7d</span><TBar :pct="c.limits?.sevenDay ? c.limits.sevenDay.utilization * 100 : null" />
-              <span class="text-faint">{{ c.limits?.sevenDay ? `resets ${rel(c.limits.sevenDay.resetsAt, store.now)}` : "" }}</span></span>
+          <template v-if="c.provider !== 'anthropic-api'">
+            <div><TBar label="5 hours" :pct="c.limits?.fiveHour ? c.limits.fiveHour.utilization * 100 : null" /><div v-if="c.limits?.fiveHour" class="mt-1 text-[11.5px] text-faint">resets {{ rel(c.limits.fiveHour.resetsAt, store.now) }}</div></div>
+            <div><TBar label="7 days" :pct="c.limits?.sevenDay ? c.limits.sevenDay.utilization * 100 : null" /><div v-if="c.limits?.sevenDay" class="mt-1 text-[11.5px] text-faint">resets {{ rel(c.limits.sevenDay.resetsAt, store.now) }}</div></div>
+          </template>
+          <div v-else class="text-[13px] text-tertiary md:col-span-2">Billed per token; no usage windows.</div>
+          <div class="flex gap-1.5">
+            <TBtn size="sm" :busy="busy[`check-${c.id}`]" @click="checkCredential(c.id)">Refresh</TBtn>
+            <TBtn size="sm" tone="danger" confirm="Remove?" @click="removeCredential(c.id)">Remove</TBtn>
           </div>
-          <div v-if="c.statusDetail" class="text-warn">! {{ c.statusDetail }}</div>
-          <div class="flex flex-wrap items-center gap-1">
-            <TBtn :busy="busy[`check-${c.id}`]" title="sends a tiny haiku request" @click="checkCredential(c.id)">check limits</TBtn>
-            <TBtn tone="danger" confirm="remove this credential?" @click="removeCredential(c.id)">remove</TBtn>
-            <span class="ml-auto text-faint">checked {{ rel(c.checkedAt, store.now) }}</span>
-          </div>
-        </li>
-        <li v-if="!store.credentials.length" class="list-none text-tertiary">// no credentials yet</li>
-      </ul>
+        </div>
+      </div>
+      <p v-else class="hint">No credentials yet: reviews need one.</p>
     </section>
   </div>
 </template>

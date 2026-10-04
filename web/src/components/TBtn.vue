@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { ref, onBeforeUnmount } from "vue";
-// Terminal button: [ label ]. With `confirm`, the first click arms it and shows the
-// confirm text; only a second click within 4 s emits. Used for every outward action.
-const props = withDefaults(defineProps<{ tone?: "default" | "primary" | "danger" | "ok"; confirm?: string; disabled?: boolean; busy?: boolean; type?: "button" | "submit"; title?: string }>(), {
-  tone: "default",
-  type: "button",
-});
+// With `confirm`, the first click arms the button and shows the confirm text; only a
+// second click within 4 s emits. Used for every outward action.
+const props = withDefaults(defineProps<{
+  tone?: "default" | "primary" | "danger" | "ghost" | "ok"; size?: "sm" | "md"; confirm?: string; disabled?: boolean; busy?: boolean; type?: "button" | "submit"; title?: string;
+}>(), { tone: "default", size: "md", type: "button" });
 const emit = defineEmits<{ (e: "click"): void }>();
 const armed = ref(false);
 let timer: ReturnType<typeof setTimeout> | undefined;
@@ -21,7 +20,13 @@ function onClick() {
   emit("click");
 }
 onBeforeUnmount(() => clearTimeout(timer));
-const toneClass = { default: "text-secondary", primary: "text-accent", danger: "text-danger", ok: "text-ok" };
+const tones = {
+  default: "border border-strong text-bright hover:bg-hover",
+  primary: "bg-accent font-medium text-on-accent hover:bg-[#ae9fff]",
+  ok: "bg-accent font-medium text-on-accent hover:bg-[#ae9fff]",
+  danger: "text-danger hover:bg-danger-bg",
+  ghost: "text-secondary hover:bg-hover hover:text-bright",
+};
 </script>
 
 <template>
@@ -29,12 +34,12 @@ const toneClass = { default: "text-secondary", primary: "text-accent", danger: "
     :type="type"
     :title="title"
     :disabled="disabled || busy"
-    class="group inline-flex items-center whitespace-nowrap rounded-sm px-1 py-0.5 hover:bg-hover disabled:cursor-default disabled:opacity-40"
-    :class="armed ? 'text-warn' : toneClass[tone]"
+    class="inline-flex cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-md transition-colors disabled:cursor-default disabled:opacity-40"
+    :class="[size === 'sm' ? 'px-2.5 py-1 text-[12.5px]' : 'px-3 py-1.5 text-[13px]', armed ? 'bg-warn-bg text-warn ring-1 ring-warn/40' : tones[tone]]"
     @click="onClick"
   >
-    <span class="text-tertiary">[</span>
-    <span class="px-1">{{ busy ? "…" : armed ? confirm : "" }}<slot v-if="!busy && !armed" /></span>
-    <span class="text-tertiary">]</span>
+    <template v-if="busy">…</template>
+    <template v-else-if="armed">{{ confirm }}</template>
+    <slot v-else />
   </button>
 </template>

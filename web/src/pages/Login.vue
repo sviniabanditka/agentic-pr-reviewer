@@ -46,21 +46,26 @@ async function submit() {
 </script>
 
 <template>
-  <main class="grid min-h-screen place-items-center px-4">
-    <form class="grid w-full max-w-sm gap-4 rounded-lg border border-subtle bg-surface px-6 py-7" @submit.prevent="submit">
+  <main class="grid min-h-screen place-items-center bg-base px-4">
+    <form class="grid w-full max-w-[360px] gap-4 rounded-2xl border border-subtle bg-surface p-8" @submit.prevent="submit">
+      <span aria-hidden="true" class="size-7 rounded-lg bg-accent" />
       <div>
-        <h1 class="m-0 text-base font-medium text-bright"><span class="text-ok">$</span> agentic-pr-reviewer {{ setup ? "setup" : invite ? "join" : "login" }}<span class="cursor-blink text-accent">█</span></h1>
-        <p class="mb-0 mt-1 text-tertiary">// {{ setup ? "first run: create the admin account" : invite ? `you were invited${inviteRole === "admin" ? " as an admin" : ""}: pick a login and password` : "sign in to the review desk" }}</p>
+        <h1 class="m-0 text-xl font-semibold text-bright">{{ needCode ? "Enter the code" : setup ? "Create the admin" : invite ? "Join" : "Sign in" }}</h1>
+        <p class="m-0 mt-0.5 text-[13.5px] text-tertiary">{{ needCode ? `From your authenticator app, for ${login}.` : setup ? "First run of Agentic PR Reviewer." : invite ? `You were invited${inviteRole === "admin" ? " as an admin" : ""}. Pick a login and password.` : "Agentic PR Reviewer" }}</p>
       </div>
-      <label><span class="label">login</span><input v-model="login" class="field" autocomplete="username" required autofocus></label>
-      <label><span class="label">password</span><input v-model="password" class="field" type="password" :autocomplete="creating ? 'new-password' : 'current-password'" :minlength="creating ? 10 : undefined" required></label>
-      <label v-if="needCode"><span class="label">code from your authenticator app</span><input v-model="code" class="field tracking-widest" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required autofocus></label>
-      <button type="submit" class="justify-self-start rounded-sm px-1 py-0.5 text-accent hover:bg-hover disabled:opacity-40" :disabled="busy">
-        <span class="text-tertiary">[</span> {{ busy ? "…" : setup ? "create admin" : invite ? "create account" : "sign in" }} <span class="text-tertiary">]</span>
+      <template v-if="!needCode">
+        <label><span class="label">Login</span><input v-model="login" class="field bg-base" autocomplete="username" required autofocus></label>
+        <label><span class="label">Password</span><input v-model="password" class="field bg-base" type="password" :autocomplete="creating ? 'new-password' : 'current-password'" :minlength="creating ? 10 : undefined" required></label>
+      </template>
+      <label v-else><span class="label">6-digit code</span>
+        <input v-model="code" class="field border-[#4a4170] bg-base py-2.5 text-center text-[22px] tracking-[0.3em]" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required autofocus></label>
+      <button type="submit" class="cursor-pointer rounded-[9px] bg-accent py-2.5 font-medium text-on-accent hover:bg-[#ae9fff] disabled:opacity-50" :disabled="busy">
+        {{ busy ? "…" : needCode ? "Continue" : setup ? "Create admin" : invite ? "Create account" : "Sign in" }}
       </button>
-      <p v-if="error" class="m-0 text-danger" role="alert">! {{ error }}</p>
-      <p v-if="setup" class="m-0 text-faint">// at least 10 characters. this page disappears once an admin exists.</p>
-      <p v-if="invite" class="m-0 text-faint">// at least 10 characters. the link works once. your github accounts, claude subscription and reviews stay yours: the admin sees only how much you use.</p>
+      <button v-if="needCode" type="button" class="cursor-pointer text-[13px] text-tertiary hover:text-bright" @click="(needCode = false), (code = ''), (error = '')">Back to password</button>
+      <p v-if="error && !(needCode && /enter the code/i.test(error))" class="m-0 text-[13px] text-danger" role="alert">{{ error }}</p>
+      <p v-if="setup" class="hint">At least 10 characters. This page disappears once an admin exists.</p>
+      <p v-if="invite" class="hint">At least 10 characters; the link works once. Your GitHub accounts, Claude subscription and reviews stay yours: the admin only sees how much you use.</p>
     </form>
   </main>
 </template>
